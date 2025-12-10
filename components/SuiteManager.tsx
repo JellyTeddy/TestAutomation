@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { TestSuite, TestCase } from '../types';
-import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand } from 'lucide-react';
+import { TestSuite, TestCase, User, Role } from '../types';
+import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle } from 'lucide-react';
 import { generateTestCases } from '../services/geminiService';
 // @ts-ignore
 import readXlsxFile from 'read-excel-file';
@@ -9,12 +9,14 @@ interface SuiteManagerProps {
   suites: TestSuite[];
   setSuites: React.Dispatch<React.SetStateAction<TestSuite[]>>;
   onRunSuite: (suite: TestSuite) => void;
+  currentUser: User;
+  allUsers: User[];
 }
 
 type AppContextType = 'WEB' | 'DESKTOP';
 type ExecutionMode = 'MANUAL' | 'AUTOMATED';
 
-const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSuite }) => {
+const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSuite, currentUser, allUsers }) => {
   const [activeSuiteId, setActiveSuiteId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
@@ -33,15 +35,44 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   const [runAddress, setRunAddress] = useState('');
   const [runEmail, setRunEmail] = useState('');
   const [runMode, setRunMode] = useState<ExecutionMode>('MANUAL');
+  const [runAssets, setRunAssets] = useState<string[]>([]); // New: Virtual Assets
+
+  // Permission Management Inputs
+  const [showPermModal, setShowPermModal] = useState(false);
+  const [permUserToAdd, setPermUserToAdd] = useState('');
+  const [permRoleToAdd, setPermRoleToAdd] = useState<Role>('MEMBER');
 
   // Excel Sheet Management
   const [availableSheets, setAvailableSheets] = useState<{name: string}[]>([]);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const genOpRef = useRef(0); // Ref to track current generation operation ID for cancellation
+  const assetInputRef = useRef<HTMLInputElement>(null); // New ref for asset upload
+  const genOpRef = useRef(0);
   
   const activeSuite = suites.find(s => s.id === activeSuiteId);
+
+  // --- PERMISSION LOGIC ---
+  const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
+
+  const getUserRole = (suite: TestSuite): Role | 'NONE' => {
+    if (isGlobalAdmin) return 'ADMIN';
+    if (!suite.permissions) return 'NONE'; 
+    return suite.permissions[currentUser.id] || 'NONE';
+  };
+
+  const activeRole = activeSuite ? getUserRole(activeSuite) : 'NONE';
+  
+  const canWrite = activeRole === 'ADMIN' || activeRole === 'MEMBER';
+  const canRun = activeRole === 'ADMIN' || activeRole === 'MEMBER';
+  const canDelete = activeRole === 'ADMIN';
+  const canManageAccess = activeRole === 'ADMIN';
+
+  // Filter visible suites in sidebar
+  const visibleSuites = suites.filter(s => {
+    const role = getUserRole(s);
+    return role !== 'NONE';
+  });
 
   const createSuite = () => {
     const newSuite: TestSuite = {
@@ -49,7 +80,10 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
       name: 'New Test Suite',
       description: 'Description of the test suite',
       createdAt: new Date().toISOString(),
-      cases: []
+      cases: [],
+      permissions: {
+        [currentUser.id]: 'ADMIN' // Creator gets Admin
+      }
     };
     setSuites([...suites, newSuite]);
     setActiveSuiteId(newSuite.id);
@@ -63,7 +97,53 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
     }
   };
 
+  // --- ACCESS MANAGEMENT ---
+  const handleAddPermission = () => {
+    if (!activeSuite || !permUserToAdd) return;
+    
+    const updatedSuite = {
+      ...activeSuite,
+      permissions: {
+        ...activeSuite.permissions,
+        [permUserToAdd]: permRoleToAdd
+      }
+    };
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
+    setPermUserToAdd('');
+  };
+
+  const handleRemovePermission = (userId: string) => {
+    if (!activeSuite) return;
+    if (userId === currentUser.id && !isGlobalAdmin) {
+       if(!confirm("You are about to remove your own access. Continue?")) return;
+    }
+
+    const newPerms = { ...activeSuite.permissions };
+    delete newPerms[userId];
+    
+    const updatedSuite = {
+      ...activeSuite,
+      permissions: newPerms
+    };
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
+    if (userId === currentUser.id && !isGlobalAdmin) setActiveSuiteId(null);
+  };
+
+  const handleChangePermission = (userId: string, newRole: Role) => {
+    if (!activeSuite) return;
+    const updatedSuite = {
+      ...activeSuite,
+      permissions: {
+        ...activeSuite.permissions,
+        [userId]: newRole
+      }
+    };
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
+  };
+
+  // --- GENERATION & IMPORT LOGIC ---
   const handleGenerateCases = async () => {
+    if (!canWrite) return;
     if (!prompt.trim() || !activeSuiteId) return;
     
     const opId = Date.now();
@@ -78,7 +158,6 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
         finalPrompt = `I have test suite data (from an Excel file or text) with the following content. Please parse this and convert it into structured test cases in KOREAN: \n\n${prompt}`;
         contextInfo = "Imported Data Conversion";
       } else {
-        // Construct context info based on user selection
         const locationLabel = appType === 'WEB' ? 'URL' : 'File Path/Address';
         contextInfo = `${appType === 'WEB' ? 'Web' : 'Desktop'} Application`;
         if (appContextValue) contextInfo += ` (${locationLabel}: ${appContextValue})`;
@@ -87,10 +166,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
 
       const newCases = await generateTestCases(finalPrompt, contextInfo);
       
-      // Check if the operation was cancelled or superseded
-      if (genOpRef.current !== opId) {
-        return;
-      }
+      if (genOpRef.current !== opId) return;
       
       setSuites(prevSuites => prevSuites.map(suite => {
         if (suite.id === activeSuiteId) {
@@ -98,8 +174,6 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
             ...suite,
             cases: [...suite.cases, ...newCases as TestCase[]]
           };
-          
-          // Optionally save the generation context as the default run config if empty
           if (!suite.targetConfig && !importMode) {
              updatedSuite.targetConfig = {
                appType,
@@ -125,43 +199,54 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   };
 
   const handleCancelGeneration = () => {
-    genOpRef.current = 0; // Invalidate current operation
+    genOpRef.current = 0; 
     setIsGenerating(false);
     setShowPromptModal(false);
   };
 
+  // --- RUN CONFIGURATION LOGIC ---
   const initiateRun = () => {
-    if (!activeSuite) return;
-    
-    // Pre-fill from existing config if available, otherwise defaults
+    if (!canRun || !activeSuite) return;
     const config = activeSuite.targetConfig;
     setRunAppType(config?.appType || 'WEB');
     setRunAddress(config?.appAddress || '');
     setRunEmail(config?.testEmail || '');
     setRunMode(config?.executionMode || 'MANUAL');
-    
+    setRunAssets(config?.mockAssets || []);
     setShowRunModal(true);
+  };
+
+  const handleAssetSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const names = Array.from(e.target.files).map(f => f.name);
+      // Avoid duplicates
+      const uniqueNames = names.filter(n => !runAssets.includes(n));
+      setRunAssets(prev => [...prev, ...uniqueNames]);
+    }
+  };
+
+  const removeAsset = (name: string) => {
+    setRunAssets(runAssets.filter(n => n !== name));
   };
 
   const confirmRun = () => {
     if (!activeSuite) return;
-
-    // Update suite with latest config
     const updatedSuite = {
       ...activeSuite,
       targetConfig: {
         appType: runAppType,
         appAddress: runAddress,
         testEmail: runEmail,
-        executionMode: runMode
+        executionMode: runMode,
+        mockAssets: runAssets
       }
     };
-
     setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
     onRunSuite(updatedSuite);
     setShowRunModal(false);
   };
 
+  // --- HELPERS ---
   const resetModalState = () => {
     setPrompt('');
     setImportMode(false);
@@ -175,11 +260,11 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   const readExcelSheet = async (file: File, sheetName: string) => {
     setIsLoadingFile(true);
     try {
-      const rows = await readXlsxFile(file, { sheet: sheetName });
+      // Fix: cast returned value to unknown then any[] to ensure map works
+      const rows = (await readXlsxFile(file, { sheet: sheetName })) as unknown as any[];
       const content = rows.map((row: any[]) => 
         row.map(cell => cell === null ? '' : String(cell)).join('\t')
       ).join('\n');
-      
       setPrompt(`[IMPORTED FILE: ${file.name} | SHEET: ${sheetName}]\n${content}`);
     } catch (error) {
       console.error("Error reading sheet:", error);
@@ -200,13 +285,16 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
 
     try {
       if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        const sheets = await readXlsxFile(file, { getSheets: true });
-        setAvailableSheets(sheets);
+        // Cast the result explicitly to any[] to avoid strict type checks and 'unknown' errors
+        const result = (await readXlsxFile(file, { getSheets: true })) as unknown as any[];
+        const sheets = result.map((sheet: any) => ({ name: sheet.name }));
         
+        setAvailableSheets(sheets);
         if (sheets.length > 0) {
           await readExcelSheet(file, sheets[0].name);
         } else {
-          const rows = await readXlsxFile(file);
+          // Fix: cast returned value to unknown then any[]
+          const rows = (await readXlsxFile(file)) as unknown as any[];
           const content = rows.map((row: any[]) => 
             row.map(cell => cell === null ? '' : String(cell)).join('\t')
           ).join('\n');
@@ -246,38 +334,54 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
           <button 
             onClick={createSuite}
             className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+            title="Create New Suite"
           >
             <Plus size={18} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          {suites.length === 0 && (
+          {visibleSuites.length === 0 && (
             <div className="text-center p-8 text-slate-400 text-sm">
-              No suites found. Create one to get started.
+              No suites found for {currentUser.name}.<br/>Create one or ask an Admin for access.
             </div>
           )}
-          {suites.map(suite => (
-            <div 
-              key={suite.id}
-              onClick={() => setActiveSuiteId(suite.id)}
-              className={`p-4 rounded-lg cursor-pointer transition-all border ${activeSuiteId === suite.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50 border-transparent'}`}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className={`font-medium ${activeSuiteId === suite.id ? 'text-blue-700' : 'text-slate-700'}`}>
-                    {suite.name}
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">{suite.cases.length} Test Cases</p>
+          {visibleSuites.map(suite => {
+            const role = getUserRole(suite);
+            return (
+              <div 
+                key={suite.id}
+                onClick={() => setActiveSuiteId(suite.id)}
+                className={`p-4 rounded-lg cursor-pointer transition-all border ${activeSuiteId === suite.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50 border-transparent'}`}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2">
+                       <h3 className={`font-medium ${activeSuiteId === suite.id ? 'text-blue-700' : 'text-slate-700'}`}>
+                        {suite.name}
+                      </h3>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                        role === 'ADMIN' ? 'bg-indigo-100 text-indigo-700' : 
+                        role === 'MEMBER' ? 'bg-blue-100 text-blue-700' : 
+                        'bg-slate-200 text-slate-600'
+                      }`}>
+                        {role === 'ADMIN' ? 'Admin' : role === 'MEMBER' ? 'Member' : 'Observer'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{suite.cases.length} Test Cases</p>
+                  </div>
+                  {getUserRole(suite) === 'ADMIN' && (
+                    <button 
+                      onClick={(e) => deleteSuite(suite.id, e)}
+                      className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Delete Suite"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
-                <button 
-                  onClick={(e) => deleteSuite(suite.id, e)}
-                  className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 size={16} />
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -285,45 +389,75 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col overflow-hidden">
         {activeSuite ? (
           <>
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <div>
-                <input 
-                  className="text-xl font-bold text-slate-800 bg-transparent border-none focus:ring-0 p-0 w-full"
-                  value={activeSuite.name}
-                  onChange={(e) => {
-                    setSuites(suites.map(s => s.id === activeSuite.id ? {...s, name: e.target.value} : s));
-                  }}
-                />
-                <input 
-                  className="text-sm text-slate-500 bg-transparent border-none focus:ring-0 p-0 w-full mt-1"
-                  value={activeSuite.description}
-                  onChange={(e) => {
-                    setSuites(suites.map(s => s.id === activeSuite.id ? {...s, description: e.target.value} : s));
-                  }}
-                />
-              </div>
-              <div className="flex space-x-2">
-                 <button 
-                  onClick={openImportModal}
-                  className="flex items-center space-x-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
-                >
-                  <FileSpreadsheet size={16} />
-                  <span className="hidden lg:inline">Import Data</span>
-                </button>
-                <button 
-                  onClick={openGenerateModal}
-                  className="flex items-center space-x-2 px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"
-                >
-                  <Wand2 size={16} />
-                  <span className="hidden lg:inline">AI Generate</span>
-                </button>
-                <button 
-                  onClick={initiateRun}
-                  className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm"
-                >
-                  <Play size={16} />
-                  <span>Run Suite</span>
-                </button>
+            <div className="p-6 border-b border-slate-100 bg-slate-50">
+               <div className="flex justify-between items-start mb-4">
+                  <div className="flex-1 mr-4">
+                    <input 
+                      className="text-xl font-bold text-slate-800 bg-transparent border-none focus:ring-0 p-0 w-full disabled:opacity-70 disabled:cursor-not-allowed"
+                      value={activeSuite.name}
+                      disabled={!canWrite}
+                      onChange={(e) => {
+                        setSuites(suites.map(s => s.id === activeSuite.id ? {...s, name: e.target.value} : s));
+                      }}
+                    />
+                    <input 
+                      className="text-sm text-slate-500 bg-transparent border-none focus:ring-0 p-0 w-full mt-1 disabled:opacity-70 disabled:cursor-not-allowed"
+                      value={activeSuite.description}
+                      disabled={!canWrite}
+                      onChange={(e) => {
+                        setSuites(suites.map(s => s.id === activeSuite.id ? {...s, description: e.target.value} : s));
+                      }}
+                    />
+                  </div>
+                  {canManageAccess && (
+                    <button 
+                      onClick={() => setShowPermModal(true)}
+                      className="text-xs flex items-center gap-1 bg-white border border-slate-200 text-slate-600 px-2 py-1.5 rounded-md hover:bg-slate-100 hover:text-slate-800 transition-colors shadow-sm"
+                    >
+                       <Users size={14} /> Manage Access
+                    </button>
+                  )}
+               </div>
+               
+              <div className="flex items-center space-x-2">
+                 {/* Observer Controls */}
+                 {!canWrite && (
+                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
+                      <Eye size={14} />
+                      Read-Only (Observer Mode)
+                    </div>
+                 )}
+
+                 {/* Write Controls */}
+                 {canWrite && (
+                   <>
+                     <button 
+                      onClick={openImportModal}
+                      className="flex items-center space-x-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
+                    >
+                      <FileSpreadsheet size={16} />
+                      <span className="hidden lg:inline">Import Data</span>
+                    </button>
+                    <button 
+                      onClick={openGenerateModal}
+                      className="flex items-center space-x-2 px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"
+                    >
+                      <Wand2 size={16} />
+                      <span className="hidden lg:inline">AI Generate</span>
+                    </button>
+                   </>
+                 )}
+
+                 {/* Run Controls */}
+                 {canRun && (
+                    <button 
+                      onClick={initiateRun}
+                      className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm ml-auto"
+                    >
+                      <Play size={16} />
+                      <span>Run Suite</span>
+                    </button>
+                 )}
               </div>
             </div>
 
@@ -333,11 +467,11 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
                   <div className="text-center py-20 text-slate-400">
                     <FileText size={48} className="mx-auto mb-4 opacity-20" />
                     <p>No test cases yet.</p>
-                    <p className="text-sm mt-2">Click "AI Generate" or "Import Data" to automagically create some.</p>
+                    {canWrite && <p className="text-sm mt-2">Click "AI Generate" or "Import Data" to automagically create some.</p>}
                   </div>
                 ) : (
                   activeSuite.cases.map((testCase, index) => (
-                    <TestCaseCard key={testCase.id} testCase={testCase} index={index} />
+                    <TestCaseCard key={testCase.id} testCase={testCase} index={index} readOnly={!canWrite} />
                   ))
                 )}
               </div>
@@ -350,6 +484,122 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
           </div>
         )}
       </div>
+
+      {/* Access Management Modal */}
+      {showPermModal && activeSuite && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 m-4 flex flex-col max-h-[90vh]">
+              <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
+                 <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                   <Shield className="text-indigo-600" size={20} />
+                   Project Access Control
+                 </h3>
+                 <button onClick={() => setShowPermModal(false)} className="text-slate-400 hover:text-slate-600">
+                   <X size={20} />
+                 </button>
+              </div>
+
+              <div className="space-y-4 flex-1 overflow-y-auto">
+                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Add User</label>
+                    <div className="flex gap-2">
+                       <select 
+                         className="flex-1 border border-slate-300 rounded-lg p-2 text-sm outline-none"
+                         value={permUserToAdd}
+                         onChange={(e) => setPermUserToAdd(e.target.value)}
+                       >
+                         <option value="">Select User...</option>
+                         {allUsers
+                           .filter(u => u.email !== 'administrator@autotest.ai' && !activeSuite.permissions?.[u.id])
+                           .map(u => (
+                             <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+                           ))
+                         }
+                       </select>
+                       <select
+                         className="w-32 border border-slate-300 rounded-lg p-2 text-sm outline-none"
+                         value={permRoleToAdd}
+                         onChange={(e) => setPermRoleToAdd(e.target.value as Role)}
+                       >
+                         <option value="ADMIN">Admin</option>
+                         <option value="MEMBER">Member</option>
+                         <option value="OBSERVER">Observer</option>
+                       </select>
+                       <button 
+                         onClick={handleAddPermission}
+                         disabled={!permUserToAdd}
+                         className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                       >
+                         Add
+                       </button>
+                    </div>
+                 </div>
+
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Current Permissions</label>
+                    <div className="space-y-2">
+                       {/* Super Admin Always Visible */}
+                       <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                          <div className="flex items-center gap-3">
+                             <div className="w-8 h-8 flex items-center justify-center bg-indigo-50 rounded-full text-lg">🛡️</div>
+                             <div>
+                               <p className="text-sm font-semibold text-slate-800">Super Admin</p>
+                               <p className="text-xs text-slate-500">administrator@autotest.ai</p>
+                             </div>
+                          </div>
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-bold">GLOBAL</span>
+                       </div>
+
+                       {Object.entries(activeSuite.permissions || {}).map(([userId, role]) => {
+                         const user = allUsers.find(u => u.id === userId);
+                         if (!user) return null;
+                         return (
+                           <div key={userId} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                              <div className="flex items-center gap-3">
+                                 <div className="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-full text-lg">{user.avatar}</div>
+                                 <div>
+                                   <p className="text-sm font-semibold text-slate-800">{user.name}</p>
+                                   <p className="text-xs text-slate-500">{user.email}</p>
+                                 </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <select 
+                                   className="text-xs border border-slate-200 rounded p-1"
+                                   value={role}
+                                   onChange={(e) => handleChangePermission(userId, e.target.value as Role)}
+                                >
+                                   <option value="ADMIN">Admin</option>
+                                   <option value="MEMBER">Member</option>
+                                   <option value="OBSERVER">Observer</option>
+                                </select>
+                                <button 
+                                  onClick={() => handleRemovePermission(userId)}
+                                  className="text-slate-400 hover:text-red-500 p-1"
+                                >
+                                  <X size={16} />
+                                </button>
+                              </div>
+                           </div>
+                         );
+                       })}
+                       
+                       {(!activeSuite.permissions || Object.keys(activeSuite.permissions).length === 0) && (
+                         <p className="text-sm text-slate-400 italic text-center py-4">No explicit permissions set.</p>
+                       )}
+                    </div>
+                 </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                <button 
+                  onClick={() => setShowPermModal(false)}
+                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
+                >
+                  Done
+                </button>
+              </div>
+           </div>
+        </div>
+      )}
 
       {/* AI Prompt/Import Modal */}
       {showPromptModal && (
@@ -523,7 +773,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
       {/* Run Configuration Modal */}
       {showRunModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -537,7 +787,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
               </button>
             </div>
 
-            <div className="space-y-5">
+            <div className="space-y-5 flex-1 overflow-y-auto pr-2">
               
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Execution Mode</label>
@@ -617,9 +867,51 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
                 </div>
               </div>
 
+              {/* Mock Assets Section */}
+              <div className="pt-2 border-t border-slate-100">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                  Test Assets (Files/Documents)
+                </label>
+                <div className="space-y-2">
+                   <div 
+                     onClick={() => assetInputRef.current?.click()}
+                     className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center cursor-pointer hover:bg-slate-50 hover:border-slate-400 transition-colors"
+                   >
+                      <input 
+                        type="file" 
+                        multiple 
+                        className="hidden" 
+                        ref={assetInputRef}
+                        onChange={handleAssetSelect}
+                      />
+                      <div className="flex flex-col items-center gap-1 text-slate-500">
+                         <FolderOpen size={20} />
+                         <span className="text-xs">Click to select files from system</span>
+                      </div>
+                   </div>
+
+                   {runAssets.length > 0 && (
+                     <div className="flex flex-wrap gap-2 mt-2">
+                       {runAssets.map(asset => (
+                         <span key={asset} className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 text-slate-700 text-xs rounded border border-slate-200">
+                           <FileIcon size={10} />
+                           {asset}
+                           <button onClick={() => removeAsset(asset)} className="text-slate-400 hover:text-red-500">
+                             <XCircle size={12} />
+                           </button>
+                         </span>
+                       ))}
+                     </div>
+                   )}
+                   {runAssets.length === 0 && (
+                     <p className="text-[10px] text-slate-400 italic">No files selected. Auto-runner will not see any local files.</p>
+                   )}
+                </div>
+              </div>
+
             </div>
 
-            <div className="mt-8 pt-4 border-t border-slate-100 flex justify-end space-x-3">
+            <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end space-x-3">
               <button 
                 onClick={() => setShowRunModal(false)}
                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
@@ -641,7 +933,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   );
 };
 
-const TestCaseCard: React.FC<{ testCase: TestCase; index: number }> = ({ testCase, index }) => {
+const TestCaseCard: React.FC<{ testCase: TestCase; index: number; readOnly?: boolean }> = ({ testCase, index, readOnly }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -660,7 +952,8 @@ const TestCaseCard: React.FC<{ testCase: TestCase; index: number }> = ({ testCas
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                 testCase.priority === 'High' ? 'bg-red-100 text-red-700' :
                 testCase.priority === 'Medium' ? 'bg-amber-100 text-amber-700' :
-                'bg-green-100 text-green-700'
+                testCase.priority === 'Low' ? 'bg-blue-100 text-blue-700' :
+                'bg-slate-100 text-slate-600'
               }`}>
                 {testCase.priority}
               </span>

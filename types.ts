@@ -14,17 +14,21 @@ export interface TestCase {
   priority: 'Low' | 'Medium' | 'High';
 }
 
+export type Role = 'ADMIN' | 'MEMBER' | 'OBSERVER';
+
 export interface TestSuite {
   id: string;
   name: string;
   description: string;
   createdAt: string;
   cases: TestCase[];
+  permissions?: Record<string, Role>; // Map userId to Role
   targetConfig?: {
     appType: 'WEB' | 'DESKTOP';
     appAddress: string;
     testEmail?: string;
     executionMode?: 'MANUAL' | 'AUTOMATED';
+    mockAssets?: string[]; // List of file names available in the virtual file system
   };
 }
 

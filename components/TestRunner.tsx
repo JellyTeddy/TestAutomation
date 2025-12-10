@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TestSuite, TestRun, TestResult, TestStatus, TestCase } from '../types';
-import { CheckCircle, XCircle, SkipForward, ArrowRight, ArrowLeft, Save, AlertOctagon, Monitor, Globe, Mail, Bot, Loader2, PlayCircle, PauseCircle } from 'lucide-react';
+import { CheckCircle, XCircle, SkipForward, ArrowRight, ArrowLeft, Save, AlertOctagon, Monitor, Globe, Mail, Bot, Loader2, PlayCircle, PauseCircle, FileSpreadsheet, FolderOpen } from 'lucide-react';
 import { simulateTestExecution } from '../services/geminiService';
 
 interface TestRunnerProps {
@@ -60,7 +60,13 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
 
     const runSimulation = async () => {
       try {
-        const contextInfo = `${suite.targetConfig?.appType || 'App'} at ${suite.targetConfig?.appAddress || 'Loc'} using ${suite.targetConfig?.testEmail || 'default user'}`;
+        let contextInfo = `${suite.targetConfig?.appType || 'App'} at ${suite.targetConfig?.appAddress || 'Loc'} using ${suite.targetConfig?.testEmail || 'default user'}`;
+        
+        // Inject Virtual File System Context
+        if (suite.targetConfig?.mockAssets && suite.targetConfig.mockAssets.length > 0) {
+           contextInfo += `\n[Virtual File System] Available Files: ${suite.targetConfig.mockAssets.join(', ')}`;
+        }
+
         const result = await simulateTestExecution(currentCase, contextInfo);
         
         setSimulatedLogs(prev => ({
@@ -68,9 +74,9 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
           [currentCase.id]: result.notes
         }));
 
-        handleStatus(result.status);
+        handleStatus(result.status, result.notes);
       } catch (error) {
-        handleStatus('SKIPPED');
+        handleStatus('SKIPPED', 'Automation execution failed.');
       }
     };
 
@@ -78,12 +84,13 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
 
   }, [currentCaseIndex, isAutoRunning, isAutomatedMode, results, currentCase, isLastCase, suite]);
 
-  const handleStatus = (status: TestStatus) => {
+  const handleStatus = (status: TestStatus, notes?: string) => {
     const updatedResults = {
       ...results,
       [currentCase.id]: {
         ...results[currentCase.id],
         status,
+        notes: notes || results[currentCase.id].notes, // Save notes if provided
         timestamp: new Date().toISOString()
       }
     };
@@ -106,6 +113,38 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
       results
     };
     onComplete(run);
+  };
+
+  const exportResults = () => {
+    // CSV Header
+    const headers = ['Test Case ID', 'Title', 'Priority', 'Status', 'Execution Notes/Logs'];
+    
+    // CSV Rows
+    const rows = suite.cases.map(c => {
+      const result = results[c.id];
+      const status = result?.status || 'SKIPPED';
+      const notes = result?.notes ? result.notes.replace(/"/g, '""') : ''; // Escape quotes for CSV
+      
+      return [
+        `"${c.id}"`,
+        `"${c.title.replace(/"/g, '""')}"`,
+        c.priority,
+        status,
+        `"${notes}"`
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    
+    // Add BOM for UTF-8 support in Excel (Critical for Korean)
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${suite.name.replace(/\s+/g, '_')}_Results.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const progress = ((currentCaseIndex) / suite.cases.length) * 100;
@@ -131,6 +170,11 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
                  {suite.targetConfig.testEmail && (
                    <span className="hidden md:flex items-center gap-1">
                      (<Mail size={10} /> {suite.targetConfig.testEmail})
+                   </span>
+                 )}
+                 {suite.targetConfig.mockAssets && suite.targetConfig.mockAssets.length > 0 && (
+                   <span className="hidden md:flex items-center gap-1 text-amber-300" title={`Virtual Assets: ${suite.targetConfig.mockAssets.join(', ')}`}>
+                     (<FolderOpen size={10} /> {suite.targetConfig.mockAssets.length} Files)
                    </span>
                  )}
                </>
@@ -179,7 +223,12 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
         <div className="flex-1 flex flex-col p-6 overflow-y-auto bg-white">
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-2">
-               <span className="bg-slate-100 text-slate-500 font-mono text-xs px-2 py-1 rounded">
+               <span className={`text-xs px-2 py-1 rounded font-mono font-medium ${
+                 currentCase.priority === 'High' ? 'bg-red-100 text-red-700' :
+                 currentCase.priority === 'Medium' ? 'bg-amber-100 text-amber-700' :
+                 currentCase.priority === 'Low' ? 'bg-blue-100 text-blue-700' :
+                 'bg-slate-100 text-slate-500'
+               }`}>
                  Priority: {currentCase.priority}
                </span>
                <span className={`text-xs px-2 py-1 rounded font-bold uppercase ${
@@ -262,12 +311,20 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
                    </div>
                  )}
                  {isLastCase && !isAutoRunning && (
-                    <button 
-                      onClick={handleFinish}
-                      className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
-                    >
-                      <Save size={18} /> Finish Run
-                    </button>
+                    <>
+                      <button 
+                        onClick={exportResults}
+                        className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg font-medium shadow-sm transition-all"
+                      >
+                        <FileSpreadsheet size={18} className="text-green-600" /> Export Results
+                      </button>
+                      <button 
+                        onClick={handleFinish}
+                        className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
+                      >
+                        <Save size={18} /> Finish Run
+                      </button>
+                    </>
                  )}
               </div>
             ) : (
@@ -291,12 +348,20 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
                   <SkipForward size={18} /> Skip
                 </button>
                 {isLastCase && (
-                  <button 
-                    onClick={handleFinish}
-                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all ml-4"
-                  >
-                    <Save size={18} /> Finish Run
-                  </button>
+                  <div className="flex gap-3 ml-4">
+                    <button 
+                        onClick={exportResults}
+                        className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg font-medium shadow-sm transition-all"
+                      >
+                        <FileSpreadsheet size={18} className="text-green-600" /> Export
+                    </button>
+                    <button 
+                      onClick={handleFinish}
+                      className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-lg font-medium shadow-lg hover:shadow-xl active:scale-95 transition-all"
+                    >
+                      <Save size={18} /> Finish Run
+                    </button>
+                  </div>
                 )}
               </div>
             )}

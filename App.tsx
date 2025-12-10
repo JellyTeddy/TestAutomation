@@ -9,6 +9,7 @@ import { Bell, X, Check } from 'lucide-react';
 
 // Mock Initial Data
 const MOCK_USERS: User[] = [
+  { id: 'admin_1', name: 'Super Admin', email: 'administrator@autotest.ai', avatar: '🛡️' },
   { id: 'u1', name: 'Tester Bear', email: 'bear@autotest.ai', avatar: '🐻' },
   { id: 'u2', name: 'Developer Dave', email: 'dave@dev.co', avatar: '👨‍💻' }
 ];
@@ -19,6 +20,10 @@ const MOCK_SUITES: TestSuite[] = [
     name: 'Authentication Flow',
     description: 'Login, Registration, and Password Reset scenarios',
     createdAt: new Date().toISOString(),
+    permissions: {
+      'u1': 'ADMIN', // Tester Bear is Admin of this project
+      'u2': 'OBSERVER' // Dave is Observer
+    },
     cases: [
       {
         id: 'c1',
@@ -40,6 +45,16 @@ const MOCK_SUITES: TestSuite[] = [
           { id: 's1', action: 'Navigate to login page', expectedResult: 'Login form is visible' },
           { id: 's2', action: 'Enter valid username and invalid password', expectedResult: 'Input fields accept data' },
           { id: 's3', action: 'Click Login button', expectedResult: 'Error message "Invalid credentials" shown' }
+        ]
+      },
+      {
+        id: 'c3',
+        title: 'Check Footer Links',
+        description: 'Ensure privacy policy link works',
+        priority: 'Low',
+        steps: [
+          { id: 's1', action: 'Scroll to footer', expectedResult: 'Footer visible' },
+          { id: 's2', action: 'Click Privacy Policy', expectedResult: 'Privacy page opens' }
         ]
       }
     ]
@@ -78,7 +93,7 @@ const App: React.FC = () => {
   
   // User & Notification State
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]);
+  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[1]); // Default to Bear
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
 
@@ -95,7 +110,14 @@ const App: React.FC = () => {
     if (savedUsers) {
       const parsedUsers = JSON.parse(savedUsers);
       setUsers(parsedUsers);
-      setCurrentUser(parsedUsers[0]);
+      // Ensure Mock Admin exists if data is old
+      if (!parsedUsers.find((u: User) => u.email === 'administrator@autotest.ai')) {
+        setUsers([MOCK_USERS[0], ...parsedUsers]);
+      } else {
+        // Try to keep current user valid
+        const found = parsedUsers.find((u: User) => u.id === currentUser.id);
+        if (found) setCurrentUser(found);
+      }
     }
   }, []);
 
@@ -125,7 +147,19 @@ const App: React.FC = () => {
     setRuns([run, ...runs]);
     setActiveRunSuite(null);
     setView('DASHBOARD');
-    handleAddNotification(`Test Run "${run.suiteName}" completed with ${Object.values(run.results).filter(r => r.status === 'FAILED').length} failures.`);
+    
+    // Pass/Fail Logic based on 90% Threshold
+    const total = Object.keys(run.results).length;
+    const passed = Object.values(run.results).filter(r => r.status === 'PASSED').length;
+    const passRate = total > 0 ? (passed / total) * 100 : 0;
+    const isSuccess = passRate >= 90;
+    const formattedPassRate = passRate % 1 === 0 ? passRate.toFixed(0) : passRate.toFixed(1);
+    
+    const failCount = Object.values(run.results).filter(r => r.status === 'FAILED').length;
+    
+    handleAddNotification(
+      `Test Run "${run.suiteName}" ${isSuccess ? 'PASSED' : 'FAILED'} (${formattedPassRate}%). ${failCount} failures recorded.`
+    );
   };
 
   const handleRunCancel = () => {
@@ -157,7 +191,7 @@ const App: React.FC = () => {
       id: crypto.randomUUID(),
       name,
       email,
-      avatar: avatar // Use selected avatar
+      avatar: avatar 
     };
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
@@ -242,12 +276,22 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
           <div className="max-w-7xl mx-auto h-full">
-            {view === 'DASHBOARD' && <Dashboard runs={runs} />}
+            {view === 'DASHBOARD' && (
+              <Dashboard 
+                runs={runs} 
+                suites={suites}
+                setSuites={setSuites}
+                users={users}
+                currentUser={currentUser}
+              />
+            )}
             {view === 'SUITES' && (
               <SuiteManager 
                 suites={suites} 
                 setSuites={setSuites} 
                 onRunSuite={handleRunSuite} 
+                currentUser={currentUser}
+                allUsers={users}
               />
             )}
             {view === 'ISSUES' && (
