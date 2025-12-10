@@ -1,0 +1,276 @@
+import React, { useState, useEffect } from 'react';
+import Sidebar from './components/Sidebar';
+import Dashboard from './components/Dashboard';
+import SuiteManager from './components/SuiteManager';
+import TestRunner from './components/TestRunner';
+import IssueBoard from './components/IssueBoard';
+import { ViewState, TestSuite, TestRun, Issue, Notification, User } from './types';
+import { Bell, X, Check } from 'lucide-react';
+
+// Mock Initial Data
+const MOCK_USERS: User[] = [
+  { id: 'u1', name: 'Tester Bear', email: 'bear@autotest.ai', avatar: '🐻' },
+  { id: 'u2', name: 'Developer Dave', email: 'dave@dev.co', avatar: '👨‍💻' }
+];
+
+const MOCK_SUITES: TestSuite[] = [
+  {
+    id: '1',
+    name: 'Authentication Flow',
+    description: 'Login, Registration, and Password Reset scenarios',
+    createdAt: new Date().toISOString(),
+    cases: [
+      {
+        id: 'c1',
+        title: 'Valid Login',
+        description: 'Verify user can login with valid credentials',
+        priority: 'High',
+        steps: [
+          { id: 's1', action: 'Navigate to login page', expectedResult: 'Login form is visible' },
+          { id: 's2', action: 'Enter valid username and password', expectedResult: 'Input fields accept data' },
+          { id: 's3', action: 'Click Login button', expectedResult: 'Redirected to dashboard' }
+        ]
+      },
+      {
+        id: 'c2',
+        title: 'Invalid Password',
+        description: 'Verify error message on wrong password',
+        priority: 'Medium',
+        steps: [
+          { id: 's1', action: 'Navigate to login page', expectedResult: 'Login form is visible' },
+          { id: 's2', action: 'Enter valid username and invalid password', expectedResult: 'Input fields accept data' },
+          { id: 's3', action: 'Click Login button', expectedResult: 'Error message "Invalid credentials" shown' }
+        ]
+      }
+    ]
+  }
+];
+
+const MOCK_ISSUES: Issue[] = [
+  {
+    id: 'i1',
+    key: 'ISS-1',
+    title: 'Login button misalignment on IE11',
+    description: 'The login button is shifted 10px to the left.',
+    status: 'TODO',
+    priority: 'Low',
+    assignee: 'Tester Bear',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'i2',
+    key: 'ISS-2',
+    title: 'Crash when uploading 50MB file',
+    description: 'App crashes immediately.',
+    status: 'IN_PROGRESS',
+    priority: 'Critical',
+    assignee: 'Tester Bear',
+    createdAt: new Date().toISOString()
+  }
+];
+
+const App: React.FC = () => {
+  const [view, setView] = useState<ViewState>('DASHBOARD');
+  const [suites, setSuites] = useState<TestSuite[]>(MOCK_SUITES);
+  const [runs, setRuns] = useState<TestRun[]>([]);
+  const [issues, setIssues] = useState<Issue[]>(MOCK_ISSUES);
+  const [activeRunSuite, setActiveRunSuite] = useState<TestSuite | null>(null);
+  
+  // User & Notification State
+  const [users, setUsers] = useState<User[]>(MOCK_USERS);
+  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[0]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+
+  // Load from local storage on mount (simulated persistence)
+  useEffect(() => {
+    const savedSuites = localStorage.getItem('autotest_suites');
+    const savedRuns = localStorage.getItem('autotest_runs');
+    const savedIssues = localStorage.getItem('autotest_issues');
+    const savedUsers = localStorage.getItem('autotest_users');
+    
+    if (savedSuites) setSuites(JSON.parse(savedSuites));
+    if (savedRuns) setRuns(JSON.parse(savedRuns));
+    if (savedIssues) setIssues(JSON.parse(savedIssues));
+    if (savedUsers) {
+      const parsedUsers = JSON.parse(savedUsers);
+      setUsers(parsedUsers);
+      setCurrentUser(parsedUsers[0]);
+    }
+  }, []);
+
+  // Save to local storage on change
+  useEffect(() => {
+    localStorage.setItem('autotest_suites', JSON.stringify(suites));
+  }, [suites]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_runs', JSON.stringify(runs));
+  }, [runs]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_issues', JSON.stringify(issues));
+  }, [issues]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_users', JSON.stringify(users));
+  }, [users]);
+
+  const handleRunSuite = (suite: TestSuite) => {
+    setActiveRunSuite(suite);
+    setView('RUNNER');
+  };
+
+  const handleRunComplete = (run: TestRun) => {
+    setRuns([run, ...runs]);
+    setActiveRunSuite(null);
+    setView('DASHBOARD');
+    handleAddNotification(`Test Run "${run.suiteName}" completed with ${Object.values(run.results).filter(r => r.status === 'FAILED').length} failures.`);
+  };
+
+  const handleRunCancel = () => {
+    setActiveRunSuite(null);
+    setView('SUITES');
+  };
+
+  const handleAddNotification = (message: string) => {
+    const newNotif: Notification = {
+      id: crypto.randomUUID(),
+      message,
+      type: 'ASSIGNMENT',
+      read: false,
+      timestamp: new Date().toISOString()
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+  };
+
+  const markRead = (id: string) => {
+    setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  const clearAll = () => {
+    setNotifications([]);
+  };
+  
+  const handleRegisterUser = (name: string, email: string, avatar: string) => {
+    const newUser: User = {
+      id: crypto.randomUUID(),
+      name,
+      email,
+      avatar: avatar // Use selected avatar
+    };
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    setCurrentUser(newUser); // Auto switch to new user
+    handleAddNotification(`Welcome ${name}! Your account has been created.`);
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-900">
+      {/* Sidebar hidden in Runner mode to focus user */}
+      {view !== 'RUNNER' && (
+        <Sidebar 
+          currentView={view} 
+          onNavigate={setView} 
+          currentUser={currentUser}
+          users={users}
+          onSwitchUser={setCurrentUser}
+          onRegisterUser={handleRegisterUser}
+        />
+      )}
+
+      <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
+        {/* Top Right Notification Bell */}
+        {view !== 'RUNNER' && (
+          <div className="absolute top-6 right-8 z-30">
+            <button 
+              onClick={() => setShowNotifPanel(!showNotifPanel)}
+              className="relative p-2 bg-white rounded-full shadow-sm border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <Bell size={20} />
+              {unreadCount > 0 && (
+                <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border-2 border-white">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {showNotifPanel && (
+              <div className="absolute right-0 mt-3 w-80 bg-white rounded-xl shadow-xl border border-slate-100 animate-fade-in-up origin-top-right overflow-hidden">
+                <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                  <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1">
+                    Notifications {currentUser.avatar}
+                  </h3>
+                  {notifications.length > 0 && (
+                     <button onClick={clearAll} className="text-xs text-slate-400 hover:text-slate-600">Clear all</button>
+                  )}
+                </div>
+                <div className="max-h-[300px] overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-sm">
+                      <div className="text-2xl mb-2 opacity-50">💤</div>
+                      No new notifications for {currentUser.name}.
+                    </div>
+                  ) : (
+                    notifications.map(notif => (
+                      <div 
+                        key={notif.id} 
+                        className={`p-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'}`}
+                      >
+                         <div className="mt-1 flex-shrink-0">
+                           <div className="w-2 h-2 rounded-full bg-blue-500" style={{ opacity: notif.read ? 0 : 1 }} />
+                         </div>
+                         <div className="flex-1">
+                           <p className="text-sm text-slate-700 leading-snug">{notif.message}</p>
+                           <p className="text-xs text-slate-400 mt-1">{new Date(notif.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                         </div>
+                         {!notif.read && (
+                           <button onClick={() => markRead(notif.id)} className="text-slate-300 hover:text-blue-500 self-center">
+                             <Check size={14} />
+                           </button>
+                         )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-auto p-4 md:p-8">
+          <div className="max-w-7xl mx-auto h-full">
+            {view === 'DASHBOARD' && <Dashboard runs={runs} />}
+            {view === 'SUITES' && (
+              <SuiteManager 
+                suites={suites} 
+                setSuites={setSuites} 
+                onRunSuite={handleRunSuite} 
+              />
+            )}
+            {view === 'ISSUES' && (
+              <IssueBoard 
+                issues={issues} 
+                setIssues={setIssues} 
+                onNotify={handleAddNotification}
+                users={users}
+                currentUser={currentUser}
+              />
+            )}
+            {view === 'RUNNER' && activeRunSuite && (
+              <TestRunner 
+                suite={activeRunSuite} 
+                onComplete={handleRunComplete}
+                onCancel={handleRunCancel}
+              />
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;
