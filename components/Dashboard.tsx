@@ -1,17 +1,20 @@
+
 import React, { useState } from 'react';
-import { TestRun, TestResult, TestSuite, User, Role } from '../types';
+import { TestRun, TestResult, TestSuite, User, Role, Issue } from '../types';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, 
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid 
 } from 'recharts';
-import { Activity, CheckCircle, XCircle, AlertCircle, Shield, Users, X, TrendingUp, Zap, Clock, ListFilter, AlertTriangle, Target } from 'lucide-react';
+import { Activity, CheckCircle, XCircle, AlertCircle, Shield, Users, X, TrendingUp, Zap, Clock, ListFilter, AlertTriangle, Target, FileSpreadsheet, Download, Bug } from 'lucide-react';
 
 interface DashboardProps {
+  activeSuite: TestSuite;
   runs: TestRun[];
   suites: TestSuite[];
   setSuites: React.Dispatch<React.SetStateAction<TestSuite[]>>;
   users: User[];
   currentUser: User;
+  issues: Issue[];
 }
 
 const COLORS = {
@@ -42,14 +45,20 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, currentUser }) => {
+const Dashboard: React.FC<DashboardProps> = ({ activeSuite, runs, suites, setSuites, users, currentUser, issues }) => {
   // Admin Logic
   const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
-  const [editingSuite, setEditingSuite] = useState<TestSuite | null>(null);
+  // Strict check: User must be explicit ADMIN in permissions, or Global Admin.
+  const isProjectAdmin = isGlobalAdmin || activeSuite.permissions?.[currentUser.id] === 'ADMIN';
+  
+  const [showPermModal, setShowPermModal] = useState(false);
   const [permUserToAdd, setPermUserToAdd] = useState('');
   const [permRoleToAdd, setPermRoleToAdd] = useState<Role>('MEMBER');
+  
+  // Issue Detail View State
+  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
 
-  // --- KPI Calculation ---
+  // --- KPI Calculation for Active Suite ---
   const totalRuns = runs.length;
   
   let totalTests = 0;
@@ -57,9 +66,9 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
   let totalFailed = 0;
   let totalSkipped = 0;
 
-  // Lookup map for case priority: CaseID -> Priority
+  // Lookup map for case priority: CaseID -> Priority (Only for active suite)
   const casePriorityMap = new Map<string, string>();
-  suites.forEach(s => s.cases.forEach(c => casePriorityMap.set(c.id, c.priority)));
+  activeSuite.cases.forEach(c => casePriorityMap.set(c.id, c.priority));
 
   const failuresByPriority = { High: 0, Medium: 0, Low: 0 };
 
@@ -80,6 +89,11 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
   });
 
   const passRate = totalTests > 0 ? Math.round((totalPassed / totalTests) * 100) : 0;
+
+  // --- Recent Issues Logic ---
+  const recentIssues = [...issues]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 3);
 
   // --- Chart Data Preparation ---
 
@@ -112,14 +126,12 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
       };
     });
 
-  // 3. Priority Breakdown Data (Total Scope)
+  // 3. Priority Breakdown Data (Project Scope)
   const priorityCounts = { High: 0, Medium: 0, Low: 0 };
-  suites.forEach(suite => {
-    suite.cases.forEach(c => {
-      if (c.priority && priorityCounts[c.priority] !== undefined) {
-        priorityCounts[c.priority]++;
-      }
-    });
+  activeSuite.cases.forEach(c => {
+    if (c.priority && priorityCounts[c.priority] !== undefined) {
+      priorityCounts[c.priority]++;
+    }
   });
   
   const priorityData = [
@@ -128,60 +140,144 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
     { name: 'Low', value: priorityCounts.Low, color: COLORS.LOW },
   ].filter(d => d.value > 0);
 
-  // 4. Failures by Priority Data (New Chart)
+  // 4. Failures by Priority Data
   const failurePriorityData = [
     { name: 'High', value: failuresByPriority.High, color: COLORS.HIGH },
     { name: 'Medium', value: failuresByPriority.Medium, color: COLORS.MEDIUM },
     { name: 'Low', value: failuresByPriority.Low, color: COLORS.LOW },
-  ]; // Keep 0 values to show empty states on axis if needed, or filter if preferred.
-
+  ];
 
   // --- Access Management Handlers ---
   const handleAddPermission = () => {
-    if (!editingSuite || !permUserToAdd) return;
+    if (!permUserToAdd) return;
     const updatedSuite = {
-      ...editingSuite,
+      ...activeSuite,
       permissions: {
-        ...editingSuite.permissions,
+        ...activeSuite.permissions,
         [permUserToAdd]: permRoleToAdd
       }
     };
-    setSuites(suites.map(s => s.id === editingSuite.id ? updatedSuite : s));
-    setEditingSuite(updatedSuite);
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
     setPermUserToAdd('');
   };
 
   const handleChangePermission = (userId: string, newRole: Role) => {
-    if (!editingSuite) return;
     const updatedSuite = {
-      ...editingSuite,
+      ...activeSuite,
       permissions: {
-        ...editingSuite.permissions,
+        ...activeSuite.permissions,
         [userId]: newRole
       }
     };
-    setSuites(suites.map(s => s.id === editingSuite.id ? updatedSuite : s));
-    setEditingSuite(updatedSuite);
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
   };
 
   const handleRemovePermission = (userId: string) => {
-    if (!editingSuite) return;
-    const newPerms = { ...editingSuite.permissions };
+    const newPerms = { ...activeSuite.permissions };
     delete newPerms[userId];
-    const updatedSuite = { ...editingSuite, permissions: newPerms };
-    setSuites(suites.map(s => s.id === editingSuite.id ? updatedSuite : s));
-    setEditingSuite(updatedSuite);
+    const updatedSuite = { ...activeSuite, permissions: newPerms };
+    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
+  };
+
+  const handleExportHistory = () => {
+    if (runs.length === 0) {
+      alert("No run history to export.");
+      return;
+    }
+
+    const headers = ['Run ID', 'Project Name', 'Start Time', 'End Time', 'Status', 'Total Tests', 'Passed', 'Failed', 'Skipped', 'Pass Rate (%)'];
+    
+    const rows = runs.map(run => {
+      const total = Object.keys(run.results).length;
+      const passed = Object.values(run.results).filter((r: TestResult) => r.status === 'PASSED').length;
+      const failed = Object.values(run.results).filter((r: TestResult) => r.status === 'FAILED').length;
+      const skipped = Object.values(run.results).filter((r: TestResult) => r.status === 'SKIPPED').length;
+      const rate = total > 0 ? ((passed / total) * 100).toFixed(2) : '0';
+
+      return [
+        `"${run.id}"`,
+        `"${run.suiteName.replace(/"/g, '""')}"`,
+        `"${new Date(run.startTime).toLocaleString()}"`,
+        `"${run.endTime ? new Date(run.endTime).toLocaleString() : '-'}"`,
+        run.status,
+        total,
+        passed,
+        failed,
+        skipped,
+        rate
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    // Add BOM for Excel UTF-8 compatibility
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${activeSuite.name.replace(/\s+/g, '_')}_History_Report.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportRun = (run: TestRun) => {
+    // Try to find the suite this run belongs to, default to activeSuite
+    const relatedSuite = suites.find(s => s.id === run.suiteId) || activeSuite;
+    const headers = ['Test Case ID', 'Title', 'Priority', 'Status', 'Notes', 'Timestamp'];
+    
+    const rows = Object.values(run.results).map(result => {
+       const testCase = relatedSuite.cases.find(c => c.id === result.caseId);
+       const title = testCase ? testCase.title : 'Unknown Case';
+       const priority = testCase ? testCase.priority : '-';
+       const notes = result.notes ? result.notes.replace(/"/g, '""') : '';
+       
+       return [
+         `"${result.caseId}"`,
+         `"${title.replace(/"/g, '""')}"`,
+         priority,
+         result.status,
+         `"${notes}"`,
+         `"${result.timestamp}"`
+       ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const dateStr = new Date(run.startTime).toISOString().split('T')[0];
+    link.setAttribute('download', `${run.suiteName.replace(/\s+/g, '_')}_Run_${dateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-slate-500 text-sm mt-1">Overview of your test automation metrics.</p>
+          <div className="flex items-center gap-2 mb-1">
+             <h1 className="text-3xl font-bold text-slate-800">{activeSuite.name}</h1>
+             <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-mono">
+               {activeSuite.cases.length} Cases
+             </span>
+          </div>
+          <p className="text-slate-500 text-sm">{activeSuite.description}</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-400 bg-white px-3 py-1.5 rounded-full border border-slate-100 shadow-sm">
-          <Clock size={14} /> Last updated: {new Date().toLocaleTimeString()}
+        <div className="flex items-center gap-3">
+          {/* Only Project Admins or Super Admins can see the Team Access button */}
+          {isProjectAdmin && (
+             <button 
+               onClick={() => setShowPermModal(true)}
+               className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-xs font-medium border border-indigo-100"
+             >
+               <Users size={14} /> Team Access
+             </button>
+          )}
+          <div className="flex items-center gap-2 text-xs text-slate-400 bg-white px-3 py-1.5 rounded-full border border-slate-100 shadow-sm">
+            <Clock size={14} /> Updated: {new Date().toLocaleTimeString()}
+          </div>
         </div>
       </div>
       
@@ -345,142 +441,150 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
            </div>
       </div>
       
-      {/* Recent Runs List */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-           <h2 className="font-bold text-slate-800 text-lg">Recent Run History</h2>
-           <button className="text-xs text-blue-600 font-medium hover:underline">View All</button>
-        </div>
-        <div className="divide-y divide-slate-50">
-           {runs.length === 0 ? (
-             <p className="p-8 text-center text-slate-400 text-sm">No test runs executed yet.</p>
-           ) : (
-             runs.slice(-5).reverse().map(run => {
-               const totalCases = Object.keys(run.results).length;
-               const passed = Object.values(run.results).filter((r: TestResult) => r.status === 'PASSED').length;
-               const failed = Object.values(run.results).filter((r: TestResult) => r.status === 'FAILED').length;
-               
-               // New Logic: 90% Threshold for PASS
-               const passRate = totalCases > 0 ? (passed / totalCases) * 100 : 0;
-               const isRunPassed = passRate >= 90;
-               const formattedPassRate = passRate % 1 === 0 ? passRate.toFixed(0) : passRate.toFixed(1);
+      {/* Row 3: History & Recent Issues */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Recent Runs List */}
+        <div className="xl:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden h-full">
+          <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+             <h2 className="font-bold text-slate-800 text-lg">Recent Run History</h2>
+             <button 
+               onClick={handleExportHistory}
+               className="flex items-center gap-1.5 text-xs text-green-600 font-medium hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors border border-transparent hover:border-green-200"
+             >
+               <FileSpreadsheet size={16} /> Export All Runs (Summary)
+             </button>
+          </div>
+          <div className="divide-y divide-slate-50">
+             {runs.length === 0 ? (
+               <p className="p-8 text-center text-slate-400 text-sm">No test runs executed yet.</p>
+             ) : (
+               runs.slice(-5).reverse().map(run => {
+                 const totalCases = Object.keys(run.results).length;
+                 const passed = Object.values(run.results).filter((r: TestResult) => r.status === 'PASSED').length;
+                 const failed = Object.values(run.results).filter((r: TestResult) => r.status === 'FAILED').length;
+                 
+                 // Calculate bar width for visuals
+                 const passPercent = totalCases > 0 ? (passed / totalCases) * 100 : 0;
+                 const failPercent = totalCases > 0 ? (failed / totalCases) * 100 : 0;
 
-               return (
-                 <div key={run.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                    <div className="flex items-center gap-4">
-                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isRunPassed ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-                          {isRunPassed ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
-                       </div>
-                       <div>
-                          <p className="font-medium text-slate-800 text-sm">{run.suiteName}</p>
-                          <p className="text-xs text-slate-500">{new Date(run.startTime).toLocaleString()}</p>
-                       </div>
-                    </div>
-                    <div className="flex items-center gap-6">
-                       <div className="text-right hidden sm:block">
-                          <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Passed</p>
-                          <p className="text-sm font-mono text-green-600">{passed}</p>
-                       </div>
-                       <div className="text-right hidden sm:block">
-                          <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Failed</p>
-                          <p className="text-sm font-mono text-red-600">{failed}</p>
-                       </div>
-                       <div className="w-24 flex flex-col items-end">
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div 
-                               className={`${isRunPassed ? 'bg-green-500' : 'bg-red-500'} h-full`} 
-                               style={{width: `${passRate}%`}} 
-                            />
-                          </div>
-                          <span className={`text-[10px] font-bold mt-1 ${isRunPassed ? 'text-green-600' : 'text-red-500'}`}>
-                            {formattedPassRate}% {isRunPassed ? 'PASS' : 'FAIL'}
-                          </span>
-                       </div>
-                    </div>
-                 </div>
-               )
-             })
-           )}
+                 return (
+                   <div key={run.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors group">
+                      <div className="flex items-center gap-4">
+                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${failed === 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                            {failed === 0 ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+                         </div>
+                         <div>
+                            <p className="font-medium text-slate-800 text-sm">{run.suiteName}</p>
+                            <p className="text-xs text-slate-500">{new Date(run.startTime).toLocaleString()}</p>
+                         </div>
+                      </div>
+                      <div className="flex items-center gap-6">
+                         <div className="text-right hidden sm:block">
+                            <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Passed</p>
+                            <p className="text-sm font-mono text-green-600">{passed}</p>
+                         </div>
+                         <div className="text-right hidden sm:block">
+                            <p className="text-xs text-slate-400 uppercase font-bold tracking-wider">Failed</p>
+                            <p className="text-sm font-mono text-red-600">{failed}</p>
+                         </div>
+                         <div className="w-24 flex flex-col items-end">
+                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden flex">
+                               <div className="bg-green-500 h-full" style={{width: `${passPercent}%`}}></div>
+                               <div className="bg-red-500 h-full" style={{width: `${failPercent}%`}}></div>
+                            </div>
+                            <span className={`text-[10px] font-bold mt-1 ${failed === 0 ? 'text-green-600' : 'text-red-500'}`}>
+                               {failed === 0 ? 'SUCCESS' : 'FAILURE'}
+                            </span>
+                         </div>
+                         <button 
+                           onClick={() => handleExportRun(run)}
+                           className="p-2 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                           title="Download Run Details"
+                         >
+                           <Download size={18} />
+                         </button>
+                      </div>
+                   </div>
+                 )
+               })
+             )}
+          </div>
+        </div>
+
+        {/* Recent Issues List */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden h-fit">
+           <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+              <h2 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <Bug size={20} className="text-blue-500" /> Recent Issues
+              </h2>
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full font-medium">{issues.length} Total</span>
+           </div>
+           <div className="divide-y divide-slate-50">
+              {recentIssues.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm flex flex-col items-center">
+                  <CheckCircle size={32} className="mb-2 opacity-20" />
+                  No issues reported yet.
+                </div>
+              ) : (
+                recentIssues.map(issue => (
+                  <div 
+                    key={issue.id} 
+                    onClick={() => setSelectedIssue(issue)}
+                    className="p-4 flex items-start gap-3 hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                     <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${
+                        issue.priority === 'Critical' ? 'bg-red-500' :
+                        issue.priority === 'High' ? 'bg-orange-500' :
+                        issue.priority === 'Medium' ? 'bg-blue-500' : 'bg-slate-400'
+                     }`} title={`Priority: ${issue.priority}`} />
+                     <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start">
+                           <p className="text-sm font-medium text-slate-800 truncate pr-2">{issue.title}</p>
+                           <span className="text-[10px] font-mono text-slate-400 flex-shrink-0">{issue.key}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1.5">
+                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                              issue.status === 'DONE' ? 'bg-green-50 text-green-700 border border-green-100' :
+                              issue.status === 'IN_PROGRESS' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                              'bg-slate-100 text-slate-600 border border-slate-200'
+                           }`}>
+                              {issue.status.replace('_', ' ')}
+                           </span>
+                           {issue.assignee && (
+                             <span className="text-[10px] text-slate-400 flex items-center gap-1 truncate" title={`Assigned to ${issue.assignee}`}>
+                                <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+                                {issue.assignee}
+                             </span>
+                           )}
+                        </div>
+                     </div>
+                  </div>
+                ))
+              )}
+           </div>
         </div>
       </div>
 
-      {/* Global Admin Access Management */}
-      {isGlobalAdmin && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mt-8 animate-fade-in-up">
-           <div className="flex items-center gap-3 mb-6">
-             <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
-               <Shield size={24} />
-             </div>
-             <div>
-               <h2 className="text-lg font-bold text-slate-800">Global Access Management</h2>
-               <p className="text-sm text-slate-500">Manage permissions for all test suites as Administrator.</p>
-             </div>
-           </div>
-
-           <div className="overflow-x-auto rounded-lg border border-slate-200">
-             <table className="w-full text-left border-collapse">
-               <thead className="bg-slate-50">
-                 <tr className="border-b border-slate-200 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                   <th className="py-3 px-4">Test Suite</th>
-                   <th className="py-3 px-4">Total Users</th>
-                   <th className="py-3 px-4">Admins</th>
-                   <th className="py-3 px-4">Created Date</th>
-                   <th className="py-3 px-4 text-right">Actions</th>
-                 </tr>
-               </thead>
-               <tbody className="text-sm divide-y divide-slate-100">
-                 {suites.map(suite => {
-                   const perms = suite.permissions || {};
-                   const userCount = Object.keys(perms).length;
-                   const adminCount = Object.values(perms).filter(r => r === 'ADMIN').length;
-                   
-                   return (
-                     <tr key={suite.id} className="hover:bg-slate-50 transition-colors bg-white">
-                       <td className="py-3 px-4 font-medium text-slate-800">{suite.name}</td>
-                       <td className="py-3 px-4 text-slate-600 flex items-center gap-1">
-                          <Users size={14}/> {userCount}
-                       </td>
-                       <td className="py-3 px-4 text-slate-600">{adminCount}</td>
-                       <td className="py-3 px-4 text-slate-500 font-mono text-xs">
-                         {new Date(suite.createdAt).toLocaleDateString()}
-                       </td>
-                       <td className="py-3 px-4 text-right">
-                         <button 
-                           onClick={() => setEditingSuite(suite)}
-                           className="text-indigo-600 hover:text-indigo-800 font-medium text-xs px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors"
-                         >
-                           Manage Access
-                         </button>
-                       </td>
-                     </tr>
-                   );
-                 })}
-               </tbody>
-             </table>
-           </div>
-        </div>
-      )}
-
-      {/* Permission Management Modal (Duplicate Logic from SuiteManager to be self-contained in Dashboard) */}
-      {editingSuite && (
+      {/* Access Management Modal (Project Level) - Protected visibility */}
+      {showPermModal && isProjectAdmin && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 m-4 flex flex-col max-h-[90vh]">
               <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
                  <div>
                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                       <Shield className="text-indigo-600" size={20} />
-                      Manage Project Access
+                      Project Team Access
                     </h3>
-                    <p className="text-xs text-slate-500 mt-1">Editing: {editingSuite.name}</p>
+                    <p className="text-xs text-slate-500 mt-1">Manage users for: {activeSuite.name}</p>
                  </div>
-                 <button onClick={() => setEditingSuite(null)} className="text-slate-400 hover:text-slate-600">
+                 <button onClick={() => setShowPermModal(false)} className="text-slate-400 hover:text-slate-600">
                    <X size={20} />
                  </button>
               </div>
 
               <div className="space-y-4 flex-1 overflow-y-auto">
                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Add User</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Add Member</label>
                     <div className="flex gap-2">
                        <select 
                          className="flex-1 border border-slate-300 rounded-lg p-2 text-sm outline-none"
@@ -489,7 +593,7 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
                        >
                          <option value="">Select User...</option>
                          {users
-                           .filter(u => u.email !== 'administrator@autotest.ai' && !editingSuite.permissions?.[u.id])
+                           .filter(u => u.email !== 'administrator@autotest.ai' && !activeSuite.permissions?.[u.id])
                            .map(u => (
                              <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
                            ))
@@ -515,7 +619,7 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
                  </div>
 
                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Current Permissions</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Active Members</label>
                     <div className="space-y-2">
                        {/* Super Admin Always Visible */}
                        <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
@@ -529,7 +633,7 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
                           <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-bold">GLOBAL</span>
                        </div>
 
-                       {Object.entries(editingSuite.permissions || {}).map(([userId, role]) => {
+                       {Object.entries(activeSuite.permissions || {}).map(([userId, role]) => {
                          const user = users.find(u => u.id === userId);
                          if (!user) return null;
                          return (
@@ -562,21 +666,86 @@ const Dashboard: React.FC<DashboardProps> = ({ runs, suites, setSuites, users, c
                          );
                        })}
                        
-                       {(!editingSuite.permissions || Object.keys(editingSuite.permissions).length === 0) && (
-                         <p className="text-sm text-slate-400 italic text-center py-4">No explicit permissions set.</p>
+                       {(!activeSuite.permissions || Object.keys(activeSuite.permissions).length === 0) && (
+                         <p className="text-sm text-slate-400 italic text-center py-4">No explicit members added.</p>
                        )}
                     </div>
                  </div>
               </div>
               <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
                 <button 
-                  onClick={() => setEditingSuite(null)}
+                  onClick={() => setShowPermModal(false)}
                   className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
                 >
                   Close
                 </button>
               </div>
            </div>
+        </div>
+      )}
+
+      {/* View Issue Details Modal */}
+      {selectedIssue && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl animate-fade-in-up overflow-hidden border border-slate-200">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
+              <div>
+                 <div className="flex items-center gap-2 mb-2">
+                   <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                     {selectedIssue.key}
+                   </span>
+                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                      selectedIssue.status === 'DONE' ? 'bg-green-100 text-green-700' :
+                      selectedIssue.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-700' :
+                      'bg-slate-100 text-slate-600'
+                   }`}>
+                      {selectedIssue.status.replace('_', ' ')}
+                   </span>
+                 </div>
+                 <h3 className="text-xl font-bold text-slate-800">{selectedIssue.title}</h3>
+              </div>
+              <button onClick={() => setSelectedIssue(null)} className="text-slate-400 hover:text-slate-600 p-1 hover:bg-slate-100 rounded transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+               <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Description</h4>
+               <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                 {selectedIssue.description || "No description provided."}
+               </p>
+               
+               <div className="mt-6 pt-6 border-t border-slate-100 grid grid-cols-2 gap-4">
+                  <div>
+                     <span className="text-xs text-slate-400 font-semibold block mb-1">Priority</span>
+                     <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${
+                        selectedIssue.priority === 'Critical' ? 'bg-red-50 text-red-700 border-red-100' :
+                        selectedIssue.priority === 'High' ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                        selectedIssue.priority === 'Medium' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                        'bg-slate-50 text-slate-600 border-slate-100'
+                     }`}>
+                       {selectedIssue.priority}
+                     </span>
+                  </div>
+                  <div>
+                     <span className="text-xs text-slate-400 font-semibold block mb-1">Assignee</span>
+                     <div className="flex items-center gap-2">
+                       <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px]">
+                          {users.find(u => u.name === selectedIssue.assignee)?.avatar || '👤'}
+                       </div>
+                       <span className="text-sm text-slate-700">{selectedIssue.assignee || 'Unassigned'}</span>
+                     </div>
+                  </div>
+               </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end">
+              <button 
+                onClick={() => setSelectedIssue(null)}
+                className="px-4 py-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800 rounded-lg text-sm font-medium transition-colors shadow-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

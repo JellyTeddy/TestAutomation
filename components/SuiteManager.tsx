@@ -6,6 +6,7 @@ import { generateTestCases } from '../services/geminiService';
 import readXlsxFile from 'read-excel-file';
 
 interface SuiteManagerProps {
+  activeSuite: TestSuite;
   suites: TestSuite[];
   setSuites: React.Dispatch<React.SetStateAction<TestSuite[]>>;
   onRunSuite: (suite: TestSuite) => void;
@@ -16,8 +17,7 @@ interface SuiteManagerProps {
 type AppContextType = 'WEB' | 'DESKTOP';
 type ExecutionMode = 'MANUAL' | 'AUTOMATED';
 
-const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSuite, currentUser, allUsers }) => {
-  const [activeSuiteId, setActiveSuiteId] = useState<string | null>(null);
+const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSuites, onRunSuite, currentUser, allUsers }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   
@@ -37,21 +37,14 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   const [runMode, setRunMode] = useState<ExecutionMode>('MANUAL');
   const [runAssets, setRunAssets] = useState<string[]>([]); // New: Virtual Assets
 
-  // Permission Management Inputs
-  const [showPermModal, setShowPermModal] = useState(false);
-  const [permUserToAdd, setPermUserToAdd] = useState('');
-  const [permRoleToAdd, setPermRoleToAdd] = useState<Role>('MEMBER');
-
   // Excel Sheet Management
   const [availableSheets, setAvailableSheets] = useState<{name: string}[]>([]);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const assetInputRef = useRef<HTMLInputElement>(null); // New ref for asset upload
+  const assetInputRef = useRef<HTMLInputElement>(null); 
   const genOpRef = useRef(0);
   
-  const activeSuite = suites.find(s => s.id === activeSuiteId);
-
   // --- PERMISSION LOGIC ---
   const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
 
@@ -61,90 +54,15 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
     return suite.permissions[currentUser.id] || 'NONE';
   };
 
-  const activeRole = activeSuite ? getUserRole(activeSuite) : 'NONE';
+  const activeRole = getUserRole(activeSuite);
   
   const canWrite = activeRole === 'ADMIN' || activeRole === 'MEMBER';
   const canRun = activeRole === 'ADMIN' || activeRole === 'MEMBER';
-  const canDelete = activeRole === 'ADMIN';
-  const canManageAccess = activeRole === 'ADMIN';
-
-  // Filter visible suites in sidebar
-  const visibleSuites = suites.filter(s => {
-    const role = getUserRole(s);
-    return role !== 'NONE';
-  });
-
-  const createSuite = () => {
-    const newSuite: TestSuite = {
-      id: crypto.randomUUID(),
-      name: 'New Test Suite',
-      description: 'Description of the test suite',
-      createdAt: new Date().toISOString(),
-      cases: [],
-      permissions: {
-        [currentUser.id]: 'ADMIN' // Creator gets Admin
-      }
-    };
-    setSuites([...suites, newSuite]);
-    setActiveSuiteId(newSuite.id);
-  };
-
-  const deleteSuite = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm('Are you sure you want to delete this suite?')) {
-      setSuites(suites.filter(s => s.id !== id));
-      if (activeSuiteId === id) setActiveSuiteId(null);
-    }
-  };
-
-  // --- ACCESS MANAGEMENT ---
-  const handleAddPermission = () => {
-    if (!activeSuite || !permUserToAdd) return;
-    
-    const updatedSuite = {
-      ...activeSuite,
-      permissions: {
-        ...activeSuite.permissions,
-        [permUserToAdd]: permRoleToAdd
-      }
-    };
-    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
-    setPermUserToAdd('');
-  };
-
-  const handleRemovePermission = (userId: string) => {
-    if (!activeSuite) return;
-    if (userId === currentUser.id && !isGlobalAdmin) {
-       if(!confirm("You are about to remove your own access. Continue?")) return;
-    }
-
-    const newPerms = { ...activeSuite.permissions };
-    delete newPerms[userId];
-    
-    const updatedSuite = {
-      ...activeSuite,
-      permissions: newPerms
-    };
-    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
-    if (userId === currentUser.id && !isGlobalAdmin) setActiveSuiteId(null);
-  };
-
-  const handleChangePermission = (userId: string, newRole: Role) => {
-    if (!activeSuite) return;
-    const updatedSuite = {
-      ...activeSuite,
-      permissions: {
-        ...activeSuite.permissions,
-        [userId]: newRole
-      }
-    };
-    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
-  };
 
   // --- GENERATION & IMPORT LOGIC ---
   const handleGenerateCases = async () => {
     if (!canWrite) return;
-    if (!prompt.trim() || !activeSuiteId) return;
+    if (!prompt.trim() || !activeSuite.id) return;
     
     const opId = Date.now();
     genOpRef.current = opId;
@@ -169,7 +87,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
       if (genOpRef.current !== opId) return;
       
       setSuites(prevSuites => prevSuites.map(suite => {
-        if (suite.id === activeSuiteId) {
+        if (suite.id === activeSuite.id) {
           const updatedSuite = {
             ...suite,
             cases: [...suite.cases, ...newCases as TestCase[]]
@@ -218,7 +136,8 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
 
   const handleAssetSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const names = Array.from(e.target.files).map(f => f.name);
+      // Fix: Explicitly type 'f' as File to avoid 'unknown' type error
+      const names = Array.from(e.target.files).map((f: File) => f.name);
       // Avoid duplicates
       const uniqueNames = names.filter(n => !runAssets.includes(n));
       setRunAssets(prev => [...prev, ...uniqueNames]);
@@ -285,7 +204,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
 
     try {
       if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        // Cast the result explicitly to any[] to avoid strict type checks and 'unknown' errors
+        // Fix: Cast the result explicitly to avoid 'unknown' errors by double casting
         const result = (await readXlsxFile(file, { getSheets: true })) as unknown as any[];
         const sheets = result.map((sheet: any) => ({ name: sheet.name }));
         
@@ -326,68 +245,9 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
   };
 
   return (
-    <div className="h-full flex flex-col md:flex-row gap-6 animate-fade-in">
-      {/* Sidebar List of Suites */}
-      <div className="w-full md:w-1/3 bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <h2 className="font-semibold text-slate-700">Test Suites</h2>
-          <button 
-            onClick={createSuite}
-            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-            title="Create New Suite"
-          >
-            <Plus size={18} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          {visibleSuites.length === 0 && (
-            <div className="text-center p-8 text-slate-400 text-sm">
-              No suites found for {currentUser.name}.<br/>Create one or ask an Admin for access.
-            </div>
-          )}
-          {visibleSuites.map(suite => {
-            const role = getUserRole(suite);
-            return (
-              <div 
-                key={suite.id}
-                onClick={() => setActiveSuiteId(suite.id)}
-                className={`p-4 rounded-lg cursor-pointer transition-all border ${activeSuiteId === suite.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50 border-transparent'}`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="flex items-center gap-2">
-                       <h3 className={`font-medium ${activeSuiteId === suite.id ? 'text-blue-700' : 'text-slate-700'}`}>
-                        {suite.name}
-                      </h3>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                        role === 'ADMIN' ? 'bg-indigo-100 text-indigo-700' : 
-                        role === 'MEMBER' ? 'bg-blue-100 text-blue-700' : 
-                        'bg-slate-200 text-slate-600'
-                      }`}>
-                        {role === 'ADMIN' ? 'Admin' : role === 'MEMBER' ? 'Member' : 'Observer'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">{suite.cases.length} Test Cases</p>
-                  </div>
-                  {getUserRole(suite) === 'ADMIN' && (
-                    <button 
-                      onClick={(e) => deleteSuite(suite.id, e)}
-                      className="text-slate-400 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Delete Suite"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Main Content Area */}
+    <div className="h-full flex flex-col gap-6 animate-fade-in">
+      {/* Main Content Area - Full Width now */}
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col overflow-hidden">
-        {activeSuite ? (
           <>
             <div className="p-6 border-b border-slate-100 bg-slate-50">
                <div className="flex justify-between items-start mb-4">
@@ -409,14 +269,6 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
                       }}
                     />
                   </div>
-                  {canManageAccess && (
-                    <button 
-                      onClick={() => setShowPermModal(true)}
-                      className="text-xs flex items-center gap-1 bg-white border border-slate-200 text-slate-600 px-2 py-1.5 rounded-md hover:bg-slate-100 hover:text-slate-800 transition-colors shadow-sm"
-                    >
-                       <Users size={14} /> Manage Access
-                    </button>
-                  )}
                </div>
                
               <div className="flex items-center space-x-2">
@@ -477,129 +329,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
               </div>
             </div>
           </>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-            <ChevronRight size={48} className="opacity-20 mb-4" />
-            <p>Select a suite to view details</p>
-          </div>
-        )}
       </div>
-
-      {/* Access Management Modal */}
-      {showPermModal && activeSuite && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 m-4 flex flex-col max-h-[90vh]">
-              <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
-                 <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                   <Shield className="text-indigo-600" size={20} />
-                   Project Access Control
-                 </h3>
-                 <button onClick={() => setShowPermModal(false)} className="text-slate-400 hover:text-slate-600">
-                   <X size={20} />
-                 </button>
-              </div>
-
-              <div className="space-y-4 flex-1 overflow-y-auto">
-                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Add User</label>
-                    <div className="flex gap-2">
-                       <select 
-                         className="flex-1 border border-slate-300 rounded-lg p-2 text-sm outline-none"
-                         value={permUserToAdd}
-                         onChange={(e) => setPermUserToAdd(e.target.value)}
-                       >
-                         <option value="">Select User...</option>
-                         {allUsers
-                           .filter(u => u.email !== 'administrator@autotest.ai' && !activeSuite.permissions?.[u.id])
-                           .map(u => (
-                             <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
-                           ))
-                         }
-                       </select>
-                       <select
-                         className="w-32 border border-slate-300 rounded-lg p-2 text-sm outline-none"
-                         value={permRoleToAdd}
-                         onChange={(e) => setPermRoleToAdd(e.target.value as Role)}
-                       >
-                         <option value="ADMIN">Admin</option>
-                         <option value="MEMBER">Member</option>
-                         <option value="OBSERVER">Observer</option>
-                       </select>
-                       <button 
-                         onClick={handleAddPermission}
-                         disabled={!permUserToAdd}
-                         className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                       >
-                         Add
-                       </button>
-                    </div>
-                 </div>
-
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Current Permissions</label>
-                    <div className="space-y-2">
-                       {/* Super Admin Always Visible */}
-                       <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
-                          <div className="flex items-center gap-3">
-                             <div className="w-8 h-8 flex items-center justify-center bg-indigo-50 rounded-full text-lg">🛡️</div>
-                             <div>
-                               <p className="text-sm font-semibold text-slate-800">Super Admin</p>
-                               <p className="text-xs text-slate-500">administrator@autotest.ai</p>
-                             </div>
-                          </div>
-                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-bold">GLOBAL</span>
-                       </div>
-
-                       {Object.entries(activeSuite.permissions || {}).map(([userId, role]) => {
-                         const user = allUsers.find(u => u.id === userId);
-                         if (!user) return null;
-                         return (
-                           <div key={userId} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
-                              <div className="flex items-center gap-3">
-                                 <div className="w-8 h-8 flex items-center justify-center bg-slate-50 rounded-full text-lg">{user.avatar}</div>
-                                 <div>
-                                   <p className="text-sm font-semibold text-slate-800">{user.name}</p>
-                                   <p className="text-xs text-slate-500">{user.email}</p>
-                                 </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <select 
-                                   className="text-xs border border-slate-200 rounded p-1"
-                                   value={role}
-                                   onChange={(e) => handleChangePermission(userId, e.target.value as Role)}
-                                >
-                                   <option value="ADMIN">Admin</option>
-                                   <option value="MEMBER">Member</option>
-                                   <option value="OBSERVER">Observer</option>
-                                </select>
-                                <button 
-                                  onClick={() => handleRemovePermission(userId)}
-                                  className="text-slate-400 hover:text-red-500 p-1"
-                                >
-                                  <X size={16} />
-                                </button>
-                              </div>
-                           </div>
-                         );
-                       })}
-                       
-                       {(!activeSuite.permissions || Object.keys(activeSuite.permissions).length === 0) && (
-                         <p className="text-sm text-slate-400 italic text-center py-4">No explicit permissions set.</p>
-                       )}
-                    </div>
-                 </div>
-              </div>
-              <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
-                <button 
-                  onClick={() => setShowPermModal(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200"
-                >
-                  Done
-                </button>
-              </div>
-           </div>
-        </div>
-      )}
 
       {/* AI Prompt/Import Modal */}
       {showPromptModal && (
@@ -791,25 +521,38 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ suites, setSuites, onRunSui
               
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Execution Mode</label>
-                <div className="flex space-x-2 bg-slate-100 p-1 rounded-lg">
-                  <button 
-                    onClick={() => setRunMode('MANUAL')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm rounded-md transition-all ${runMode === 'MANUAL' ? 'bg-white text-slate-800 shadow-sm font-medium' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    <Hand size={16} /> Manual
-                  </button>
-                  <button 
-                    onClick={() => setRunMode('AUTOMATED')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm rounded-md transition-all ${runMode === 'AUTOMATED' ? 'bg-white text-indigo-600 shadow-sm font-medium' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    <Bot size={16} /> AI Automated
-                  </button>
+                <div 
+                  onClick={() => setRunMode(runMode === 'MANUAL' ? 'AUTOMATED' : 'MANUAL')}
+                  className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                    runMode === 'AUTOMATED' 
+                      ? 'border-indigo-600 bg-indigo-50' 
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      runMode === 'AUTOMATED' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {runMode === 'AUTOMATED' ? <Bot size={20} /> : <Hand size={20} />}
+                    </div>
+                    <div>
+                      <p className={`text-sm font-bold ${runMode === 'AUTOMATED' ? 'text-indigo-900' : 'text-slate-700'}`}>
+                        {runMode === 'AUTOMATED' ? 'AI Automated' : 'Manual Execution'}
+                      </p>
+                      <p className={`text-xs ${runMode === 'AUTOMATED' ? 'text-indigo-600' : 'text-slate-500'}`}>
+                        {runMode === 'AUTOMATED' ? 'AI Agent simulates steps' : 'Human verifies results'}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className={`w-12 h-6 rounded-full relative transition-colors ${
+                    runMode === 'AUTOMATED' ? 'bg-indigo-600' : 'bg-slate-300'
+                  }`}>
+                     <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${
+                       runMode === 'AUTOMATED' ? 'translate-x-6' : 'translate-x-0'
+                     }`} />
+                  </div>
                 </div>
-                {runMode === 'AUTOMATED' && (
-                  <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1">
-                    <Wand2 size={12} /> The AI will simulate test execution for you.
-                  </p>
-                )}
               </div>
 
               <div>

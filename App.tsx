@@ -1,17 +1,20 @@
+
+
+
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import SuiteManager from './components/SuiteManager';
 import TestRunner from './components/TestRunner';
 import IssueBoard from './components/IssueBoard';
-import { ViewState, TestSuite, TestRun, Issue, Notification, User } from './types';
-import { Bell, X, Check } from 'lucide-react';
+import { ViewState, TestSuite, TestRun, Issue, Notification, User, Role } from './types';
+import { Bell, X, Check, FolderPlus, Layers, Trash2, Settings, Clock } from 'lucide-react';
 
 // Mock Initial Data
 const MOCK_USERS: User[] = [
-  { id: 'admin_1', name: 'Super Admin', email: 'administrator@autotest.ai', avatar: '🛡️' },
-  { id: 'u1', name: 'Tester Bear', email: 'bear@autotest.ai', avatar: '🐻' },
-  { id: 'u2', name: 'Developer Dave', email: 'dave@dev.co', avatar: '👨‍💻' }
+  { id: 'admin_1', name: 'Super Admin', email: 'administrator@autotest.ai', avatar: '🛡️', jobRole: 'System Administrator' },
+  { id: 'u1', name: 'Tester Bear', email: 'bear@autotest.ai', avatar: '🐻', jobRole: 'QA Engineer' },
+  { id: 'u2', name: 'Developer Dave', email: 'dave@dev.co', avatar: '👨‍💻', jobRole: 'Frontend Developer' }
 ];
 
 const MOCK_SUITES: TestSuite[] = [
@@ -64,23 +67,27 @@ const MOCK_SUITES: TestSuite[] = [
 const MOCK_ISSUES: Issue[] = [
   {
     id: 'i1',
+    suiteId: '1',
     key: 'ISS-1',
     title: 'Login button misalignment on IE11',
     description: 'The login button is shifted 10px to the left.',
     status: 'TODO',
     priority: 'Low',
     assignee: 'Tester Bear',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    comments: []
   },
   {
     id: 'i2',
+    suiteId: '1',
     key: 'ISS-2',
     title: 'Crash when uploading 50MB file',
     description: 'App crashes immediately.',
     status: 'IN_PROGRESS',
     priority: 'Critical',
     assignee: 'Tester Bear',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    comments: []
   }
 ];
 
@@ -89,32 +96,47 @@ const App: React.FC = () => {
   const [suites, setSuites] = useState<TestSuite[]>(MOCK_SUITES);
   const [runs, setRuns] = useState<TestRun[]>([]);
   const [issues, setIssues] = useState<Issue[]>(MOCK_ISSUES);
-  const [activeRunSuite, setActiveRunSuite] = useState<TestSuite | null>(null);
   
+  // Active Project State
+  const [activeSuiteId, setActiveSuiteId] = useState<string | null>(null);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+
   // User & Notification State
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
   const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[1]); // Default to Bear
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
 
-  // Load from local storage on mount (simulated persistence)
+  // Load from local storage on mount
   useEffect(() => {
     const savedSuites = localStorage.getItem('autotest_suites');
     const savedRuns = localStorage.getItem('autotest_runs');
     const savedIssues = localStorage.getItem('autotest_issues');
     const savedUsers = localStorage.getItem('autotest_users');
     
-    if (savedSuites) setSuites(JSON.parse(savedSuites));
+    if (savedSuites) {
+      const parsedSuites = JSON.parse(savedSuites);
+      setSuites(parsedSuites);
+      // Auto-select first available suite
+      if (parsedSuites.length > 0 && !activeSuiteId) {
+        // Simple logic: select first. Better: select first permitted.
+        setActiveSuiteId(parsedSuites[0].id);
+      }
+    } else {
+      // Init mock data
+      if (MOCK_SUITES.length > 0) setActiveSuiteId(MOCK_SUITES[0].id);
+    }
+
     if (savedRuns) setRuns(JSON.parse(savedRuns));
     if (savedIssues) setIssues(JSON.parse(savedIssues));
     if (savedUsers) {
       const parsedUsers = JSON.parse(savedUsers);
       setUsers(parsedUsers);
-      // Ensure Mock Admin exists if data is old
       if (!parsedUsers.find((u: User) => u.email === 'administrator@autotest.ai')) {
         setUsers([MOCK_USERS[0], ...parsedUsers]);
       } else {
-        // Try to keep current user valid
         const found = parsedUsers.find((u: User) => u.id === currentUser.id);
         if (found) setCurrentUser(found);
       }
@@ -138,23 +160,36 @@ const App: React.FC = () => {
     localStorage.setItem('autotest_users', JSON.stringify(users));
   }, [users]);
 
+  // Derived State
+  const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
+  
+  // Filter suites visible to current user
+  const visibleSuites = suites.filter(s => {
+    if (isGlobalAdmin) return true;
+    return s.permissions && s.permissions[currentUser.id];
+  });
+
+  // Ensure active suite is valid and visible
+  const activeSuite = visibleSuites.find(s => s.id === activeSuiteId) || visibleSuites[0] || null;
+  
+  // Filter data by active suite
+  const filteredRuns = runs.filter(r => r.suiteId === activeSuite?.id);
+  const filteredIssues = issues.filter(i => i.suiteId === activeSuite?.id);
+
   const handleRunSuite = (suite: TestSuite) => {
-    setActiveRunSuite(suite);
+    setActiveSuiteId(suite.id);
     setView('RUNNER');
   };
 
   const handleRunComplete = (run: TestRun) => {
     setRuns([run, ...runs]);
-    setActiveRunSuite(null);
     setView('DASHBOARD');
     
-    // Pass/Fail Logic based on 90% Threshold
     const total = Object.keys(run.results).length;
     const passed = Object.values(run.results).filter(r => r.status === 'PASSED').length;
     const passRate = total > 0 ? (passed / total) * 100 : 0;
     const isSuccess = passRate >= 90;
     const formattedPassRate = passRate % 1 === 0 ? passRate.toFixed(0) : passRate.toFixed(1);
-    
     const failCount = Object.values(run.results).filter(r => r.status === 'FAILED').length;
     
     handleAddNotification(
@@ -163,8 +198,7 @@ const App: React.FC = () => {
   };
 
   const handleRunCancel = () => {
-    setActiveRunSuite(null);
-    setView('SUITES');
+    setView('SUITES'); // Go back to suite manager
   };
 
   const handleAddNotification = (message: string) => {
@@ -186,12 +220,13 @@ const App: React.FC = () => {
     setNotifications([]);
   };
   
-  const handleRegisterUser = (name: string, email: string, avatar: string) => {
+  const handleRegisterUser = (name: string, email: string, avatar: string, jobRole: string) => {
     const newUser: User = {
       id: crypto.randomUUID(),
       name,
       email,
-      avatar: avatar 
+      avatar: avatar,
+      jobRole
     };
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
@@ -199,11 +234,33 @@ const App: React.FC = () => {
     handleAddNotification(`Welcome ${name}! Your account has been created.`);
   };
 
+  const handleCreateProject = () => {
+    if (!newProjectName.trim()) return;
+
+    const newSuite: TestSuite = {
+      id: crypto.randomUUID(),
+      name: newProjectName,
+      description: newProjectDesc || 'No description provided.',
+      createdAt: new Date().toISOString(),
+      cases: [],
+      permissions: {
+        [currentUser.id]: 'ADMIN' // Creator gets Admin
+      }
+    };
+
+    setSuites([...suites, newSuite]);
+    setActiveSuiteId(newSuite.id);
+    setShowCreateProjectModal(false);
+    setNewProjectName('');
+    setNewProjectDesc('');
+    // NOTE: Notification removed as per request
+  };
+
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-900">
-      {/* Sidebar hidden in Runner mode to focus user */}
+      {/* Sidebar */}
       {view !== 'RUNNER' && (
         <Sidebar 
           currentView={view} 
@@ -212,12 +269,17 @@ const App: React.FC = () => {
           users={users}
           onSwitchUser={setCurrentUser}
           onRegisterUser={handleRegisterUser}
+          suites={visibleSuites}
+          activeSuiteId={activeSuiteId}
+          onSelectSuite={setActiveSuiteId}
+          onCreateProject={() => setShowCreateProjectModal(true)}
+          isGlobalAdmin={isGlobalAdmin}
         />
       )}
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
-        {/* Top Right Notification Bell */}
-        {view !== 'RUNNER' && (
+        {/* Top Right Notification Bell - Only Show if NOT on Notification View and NOT on Runner */}
+        {view !== 'RUNNER' && view !== 'NOTIFICATIONS' && (
           <div className="absolute top-6 right-8 z-30">
             <button 
               onClick={() => setShowNotifPanel(!showNotifPanel)}
@@ -269,6 +331,17 @@ const App: React.FC = () => {
                     ))
                   )}
                 </div>
+                <div className="p-2 border-t border-slate-100 text-center">
+                    <button 
+                      onClick={() => {
+                        setShowNotifPanel(false);
+                        setView('NOTIFICATIONS');
+                      }} 
+                      className="text-xs text-blue-600 font-medium hover:underline"
+                    >
+                      View All Notifications
+                    </button>
+                </div>
               </div>
             )}
           </div>
@@ -276,36 +349,116 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
           <div className="max-w-7xl mx-auto h-full">
-            {view === 'DASHBOARD' && (
-              <Dashboard 
-                runs={runs} 
-                suites={suites}
-                setSuites={setSuites}
-                users={users}
-                currentUser={currentUser}
-              />
+            {activeSuite || view === 'NOTIFICATIONS' ? (
+              <>
+                {view === 'DASHBOARD' && activeSuite && (
+                  <Dashboard 
+                    activeSuite={activeSuite}
+                    runs={filteredRuns} 
+                    suites={suites}
+                    setSuites={setSuites}
+                    users={users}
+                    currentUser={currentUser}
+                    issues={filteredIssues}
+                  />
+                )}
+                {view === 'SUITES' && activeSuite && (
+                  <SuiteManager 
+                    activeSuite={activeSuite}
+                    suites={suites} 
+                    setSuites={setSuites} 
+                    onRunSuite={handleRunSuite} 
+                    currentUser={currentUser}
+                    allUsers={users}
+                  />
+                )}
+                {view === 'ISSUES' && activeSuite && (
+                  <IssueBoard 
+                    activeSuite={activeSuite}
+                    issues={filteredIssues} 
+                    setIssues={setIssues} 
+                    onNotify={handleAddNotification}
+                    users={users}
+                    currentUser={currentUser}
+                  />
+                )}
+                
+                {/* Notification Center View */}
+                {view === 'NOTIFICATIONS' && (
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col h-full animate-fade-in">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/30">
+                      <div>
+                        <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                          <Bell className="text-blue-600" /> Notifications
+                        </h1>
+                        <p className="text-slate-500 text-sm mt-1">Updates and alerts for <b>{currentUser.name}</b></p>
+                      </div>
+                      {notifications.length > 0 && (
+                        <button 
+                          onClick={clearAll}
+                          className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors text-sm font-medium"
+                        >
+                          <Trash2 size={16} /> Clear All
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                           <Bell size={48} className="mb-4 opacity-20" />
+                           <p className="text-lg font-medium text-slate-500">You're all caught up!</p>
+                           <p className="text-sm">No new notifications to display.</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-50">
+                          {notifications.map(notif => (
+                            <div key={notif.id} className={`p-6 hover:bg-slate-50 transition-colors flex items-start gap-4 ${notif.read ? 'opacity-75' : 'bg-blue-50/10'}`}>
+                               <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${notif.type === 'SYSTEM' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-600'}`}>
+                                 {notif.type === 'SYSTEM' ? <Settings size={20}/> : <Bell size={20}/>}
+                               </div>
+                               <div className="flex-1">
+                                  <p className="text-slate-800 font-medium text-base">{notif.message}</p>
+                                  <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-1">
+                                    <Clock size={12} /> {new Date(notif.timestamp).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'})}
+                                  </p>
+                               </div>
+                               {!notif.read && (
+                                 <button onClick={() => markRead(notif.id)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-full transition-colors" title="Mark as read">
+                                   <Check size={20} />
+                                 </button>
+                               )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                <Layers size={64} className="mb-4 opacity-20" />
+                <h2 className="text-xl font-bold text-slate-600">No Projects Available</h2>
+                <p className="text-sm mt-2 max-w-xs text-center">
+                  {isGlobalAdmin 
+                    ? "Create a new project from the sidebar to get started." 
+                    : "You haven't been assigned to any projects yet. Contact an administrator."}
+                </p>
+                {isGlobalAdmin && (
+                   <button 
+                     onClick={() => setShowCreateProjectModal(true)}
+                     className="mt-6 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm"
+                   >
+                     Create First Project
+                   </button>
+                )}
+              </div>
             )}
-            {view === 'SUITES' && (
-              <SuiteManager 
-                suites={suites} 
-                setSuites={setSuites} 
-                onRunSuite={handleRunSuite} 
-                currentUser={currentUser}
-                allUsers={users}
-              />
-            )}
-            {view === 'ISSUES' && (
-              <IssueBoard 
-                issues={issues} 
-                setIssues={setIssues} 
-                onNotify={handleAddNotification}
-                users={users}
-                currentUser={currentUser}
-              />
-            )}
-            {view === 'RUNNER' && activeRunSuite && (
+
+            {view === 'RUNNER' && activeSuite && (
               <TestRunner 
-                suite={activeRunSuite} 
+                suite={activeSuite} 
                 onComplete={handleRunComplete}
                 onCancel={handleRunCancel}
               />
@@ -313,6 +466,61 @@ const App: React.FC = () => {
           </div>
         </div>
       </main>
+
+      {/* Create Project Modal (Global) */}
+      {showCreateProjectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 flex flex-col animate-fade-in-up">
+             <div className="flex justify-between items-start mb-4">
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                   <FolderPlus className="text-blue-600" size={20} />
+                   Create New Project
+                </h3>
+                <button onClick={() => setShowCreateProjectModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X size={20} />
+                </button>
+             </div>
+             
+             <div className="space-y-4">
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Project Name</label>
+                  <input 
+                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="e.g. Mobile App V2"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    autoFocus
+                  />
+               </div>
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Description</label>
+                  <textarea 
+                    className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none min-h-[100px]"
+                    placeholder="Describe the scope of this test project..."
+                    value={newProjectDesc}
+                    onChange={(e) => setNewProjectDesc(e.target.value)}
+                  />
+               </div>
+             </div>
+
+             <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end gap-3">
+               <button 
+                 onClick={() => setShowCreateProjectModal(false)}
+                 className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
+               >
+                 Cancel
+               </button>
+               <button 
+                 onClick={handleCreateProject}
+                 disabled={!newProjectName.trim()}
+                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold shadow-md disabled:opacity-50"
+               >
+                 Create Project
+               </button>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

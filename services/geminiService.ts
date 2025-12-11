@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { TestCase, TestStep, TestStatus } from "../types";
 
@@ -32,13 +33,27 @@ const testCaseSchema: Schema = {
   }
 };
 
-const simulationSchema: Schema = {
+const simulationDetailedSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    status: { type: Type.STRING, enum: ["PASSED", "FAILED", "SKIPPED"] },
-    logs: { type: Type.STRING, description: "Detailed technical execution logs and observations in Korean" }
+    overallStatus: { type: Type.STRING, enum: ["PASSED", "FAILED", "SKIPPED"] },
+    executionSteps: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          stepNumber: { type: Type.INTEGER },
+          actionSummary: { type: Type.STRING },
+          outcome: { type: Type.STRING, enum: ["PASSED", "FAILED"] },
+          logEntry: { type: Type.STRING, description: "Technical observation in Korean" },
+          durationMs: { type: Type.INTEGER }
+        },
+        required: ["stepNumber", "outcome", "logEntry"]
+      }
+    },
+    finalAnalysis: { type: Type.STRING, description: "Root cause analysis or success confirmation in Korean" }
   },
-  required: ["status", "logs"]
+  required: ["overallStatus", "executionSteps", "finalAnalysis"]
 };
 
 export const generateTestCases = async (featureDescription: string, contextInfo?: string): Promise<Partial<TestCase>[]> => {
@@ -68,6 +83,7 @@ export const generateTestCases = async (featureDescription: string, contextInfo?
         responseMimeType: "application/json",
         responseSchema: testCaseSchema,
         systemInstruction: "You are a helpful QA assistant that generates high-quality software test cases in Korean.",
+        thinkingConfig: { thinkingBudget: 2048 } // Use reasoning to generate better edge cases
       }
     });
 
@@ -102,20 +118,28 @@ export const simulateTestExecution = async (testCase: TestCase, contextInfo: str
     
     const prompt = `
       Role: Autonomous Test Agent
-      Task: Simulate the execution of a software test case and determine the result.
+      Task: Simulate the execution of a software test case step-by-step and determine the detailed result.
       
       Context: ${contextInfo}
       Test Case: "${testCase.title}"
-      Steps:
+      Priority: ${testCase.priority}
+      
+      Steps to Execute:
       ${stepsText}
       
       Instructions:
-      1. Act as if you are executing these steps on the real application.
-      2. Generate a realistic execution log (in Korean) describing what happened.
-      3. Determine the outcome (PASSED, FAILED, or SKIPPED).
-      4. Bias towards PASSED (approx 80%), but introduce realistic failures (20%) for negative scenarios or complex edge cases.
+      1. Act as if you are executing these steps on the real application. Use the 'Thinking' process to simulate the state of the application at each step.
+      2. For each step:
+         - Simulate the action.
+         - Verify if the expected result is met.
+         - Generate a realistic execution log (in Korean).
+         - Assign a duration (ms).
+      3. Failure Logic:
+         - Introduce realistic failures (e.g., Network Timeout, Element Not Visible, 500 Internal Server Error) with a ~15% probability for 'Medium'/'High' priority cases, or if the test case logic is inherently flawed.
+         - If a step fails, stop execution of subsequent steps (mark them as skipped implicitly by not including them or noting them).
+      4. Determine the Overall Status (PASSED, FAILED).
       
-      Return strictly JSON.
+      Return strictly JSON based on the schema.
     `;
 
     const response = await ai.models.generateContent({
@@ -123,7 +147,8 @@ export const simulateTestExecution = async (testCase: TestCase, contextInfo: str
       contents: prompt,
       config: {
         responseMimeType: "application/json",
-        responseSchema: simulationSchema,
+        responseSchema: simulationDetailedSchema,
+        thinkingConfig: { thinkingBudget: 2048 } // Allow AI to 'think' through the test steps
       }
     });
 
@@ -131,13 +156,31 @@ export const simulateTestExecution = async (testCase: TestCase, contextInfo: str
     if (!jsonText) throw new Error("No response from AI");
     
     const result = JSON.parse(jsonText);
+    
+    // Format the structured log into a string for the UI
+    let formattedLog = `[INFO] Test Execution Started: ${testCase.title}\n`;
+    formattedLog += `[INFO] Environment: ${contextInfo.split('\n')[0]}\n`; // First line of context
+    formattedLog += `--------------------------------------------------\n`;
+
+    result.executionSteps.forEach((step: any) => {
+        const timestamp = new Date().toLocaleTimeString();
+        const icon = step.outcome === 'PASSED' ? '✅' : '❌';
+        formattedLog += `[${timestamp}] STEP ${step.stepNumber}: ${step.actionSummary || 'Action'} ... ${step.outcome}\n`;
+        formattedLog += `    > ${icon} Log: ${step.logEntry}\n`;
+        formattedLog += `    > ⏱️ Duration: ${step.durationMs}ms\n\n`;
+    });
+
+    formattedLog += `--------------------------------------------------\n`;
+    formattedLog += `[RESULT] ${result.overallStatus}\n`;
+    formattedLog += `[ANALYSIS] ${result.finalAnalysis}`;
+
     return {
-      status: result.status as TestStatus,
-      notes: result.logs
+      status: result.overallStatus as TestStatus,
+      notes: formattedLog
     };
 
   } catch (error) {
     console.error("Simulation failed:", error);
-    return { status: 'SKIPPED', notes: 'AI Simulation Failed' };
+    return { status: 'SKIPPED', notes: '[ERROR] AI Agent Simulation Failed. Please check API Key or quotas.' };
   }
 };
