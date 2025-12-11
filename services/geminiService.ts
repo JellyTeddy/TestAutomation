@@ -2,7 +2,19 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { TestCase, TestStep, TestStatus } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Safely access process.env.API_KEY to avoid crashes in environments where process is undefined (like browser client-side)
+const getApiKey = (): string => {
+  try {
+    if (typeof process !== 'undefined' && process.env) {
+      return process.env.API_KEY || "";
+    }
+  } catch (e) {
+    console.warn("process.env is not accessible.");
+  }
+  return "";
+};
+
+const ai = new GoogleGenAI({ apiKey: getApiKey() });
 
 const testCaseSchema: Schema = {
   type: Type.OBJECT,
