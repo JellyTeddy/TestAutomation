@@ -1,14 +1,14 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
-import { Issue, IssueStatus, IssuePriority, User, TestSuite, Comment } from '../types';
-import { Plus, MoreHorizontal, Calendar, Trash2, X, AlertCircle, ChevronDown, Clock, CheckCircle2, Circle, RotateCcw, Columns, List, Archive, ArchiveRestore, Send, Paperclip, Image as ImageIcon, MessageSquare } from 'lucide-react';
+import { Issue, IssueStatus, IssuePriority, User, TestSuite, Comment, Attachment } from '../types';
+import { Plus, MoreHorizontal, Calendar, Trash2, X, AlertCircle, ChevronDown, Clock, CheckCircle2, Circle, RotateCcw, Columns, List, Archive, ArchiveRestore, Send, Paperclip, Image as ImageIcon, MessageSquare, Search, AlertTriangle, FileText, FileSpreadsheet, File as FileIcon, Download, Video, FileCode } from 'lucide-react';
 
 interface IssueBoardProps {
   activeSuite: TestSuite;
   issues: Issue[];
   setIssues: React.Dispatch<React.SetStateAction<Issue[]>>;
   onNotify?: (message: string, recipientId: string) => void;
+  onUpdateSuite: (suite: TestSuite) => void;
   users: User[];
   currentUser: User;
 }
@@ -19,12 +19,18 @@ const COLUMNS: { id: IssueStatus; title: string; color: string }[] = [
   { id: 'DONE', title: 'Done', color: 'bg-green-50' },
 ];
 
-const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues, onNotify, users, currentUser }) => {
+const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues, onNotify, onUpdateSuite, users, currentUser }) => {
   const [viewMode, setViewMode] = useState<'KANBAN' | 'LIST'>('KANBAN');
   const [showArchived, setShowArchived] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
   
+  // Delete Confirmation State
+  const [issueToDelete, setIssueToDelete] = useState<string | null>(null);
+  
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Custom Dropdown State
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   
@@ -33,6 +39,8 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
   const [newDesc, setNewDesc] = useState('');
   const [newPriority, setNewPriority] = useState<IssuePriority>('Medium');
   const [newAssignee, setNewAssignee] = useState<string>('');
+  const [newAttachments, setNewAttachments] = useState<Attachment[]>([]);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   // Comment Form State
   const [newCommentText, setNewCommentText] = useState('');
@@ -53,19 +61,65 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
   // Drag and Drop state
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
 
-  // Filter issues based on Archive Toggle
-  const visibleIssues = showArchived 
-    ? issues.filter(i => i.status === 'ARCHIVED')
-    : issues.filter(i => i.status !== 'ARCHIVED');
+  // Filter issues based on Archive Toggle and Search Query
+  const visibleIssues = issues.filter(i => {
+    // 1. Archive Filter
+    const isArchived = i.status === 'ARCHIVED';
+    if (showArchived !== isArchived) return false;
+
+    // 2. Search Filter
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      i.title.toLowerCase().includes(query) || 
+      i.description.toLowerCase().includes(query) ||
+      i.key.toLowerCase().includes(query)
+    );
+  });
+
+  const handleAttachmentSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files) as File[];
+      const processedAttachments: Attachment[] = [];
+
+      for (const file of files) {
+        const reader = new FileReader();
+        const result = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+
+        processedAttachments.push({
+          id: crypto.randomUUID(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: result
+        });
+      }
+
+      setNewAttachments(prev => [...prev, ...processedAttachments]);
+    }
+    // Reset input to allow selecting same file again
+    if (attachmentInputRef.current) attachmentInputRef.current.value = '';
+  };
+
+  const removeNewAttachment = (id: string) => {
+    setNewAttachments(prev => prev.filter(a => a.id !== id));
+  };
 
   const createIssue = () => {
     if (!newTitle.trim()) return;
     
-    // Find max key number in *all* issues, or just random
+    // Generate Sequential Issue Key
+    const prefix = activeSuite.issuePrefix || 'ISS';
+    const nextNumber = activeSuite.nextIssueNumber || 1;
+    const issueKey = `${prefix}-${String(nextNumber).padStart(4, '0')}`;
+    
     const newIssue: Issue = {
       id: crypto.randomUUID(),
       suiteId: activeSuite.id, // Link to active project
-      key: `ISS-${Math.floor(Math.random() * 10000)}`, // Simple ID generation
+      key: issueKey, 
       title: newTitle,
       description: newDesc,
       status: 'TODO',
@@ -73,11 +127,19 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
       assignee: newAssignee,
       reopenCount: 0,
       createdAt: new Date().toISOString(),
-      comments: []
+      comments: [],
+      attachments: newAttachments
     };
 
     // Update parent state (which holds all issues)
     setIssues(prevIssues => [...prevIssues, newIssue]);
+    
+    // Update Suite's Next Issue Number
+    onUpdateSuite({
+      ...activeSuite,
+      nextIssueNumber: nextNumber + 1
+    });
+
     setShowCreateModal(false);
     resetForm();
 
@@ -117,13 +179,19 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
     setNewDesc('');
     setNewPriority('Medium');
     setNewAssignee(currentUser.name);
+    setNewAttachments([]);
   };
 
   const deleteIssue = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (confirm('Delete this issue?')) {
-      setIssues(prevIssues => prevIssues.filter(i => i.id !== id));
-      if (selectedIssue?.id === id) setSelectedIssue(null);
+    setIssueToDelete(id);
+  };
+
+  const confirmDelete = () => {
+    if (issueToDelete) {
+      setIssues(prevIssues => prevIssues.filter(i => i.id !== issueToDelete));
+      if (selectedIssue?.id === issueToDelete) setSelectedIssue(null);
+      setIssueToDelete(null);
     }
   };
 
@@ -256,6 +324,15 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
     setShowMentionList(false);
   };
 
+  const downloadAttachment = (attachment: Attachment) => {
+    const link = document.createElement('a');
+    link.href = attachment.data;
+    link.download = attachment.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // --- Helper Renderers ---
 
   const getPriorityColor = (p: IssuePriority) => {
@@ -278,28 +355,49 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
   };
 
   const getStatusBadge = (status: IssueStatus) => {
+    const baseClasses = "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap";
     switch (status) {
         case 'DONE': return (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                <CheckCircle2 size={12} /> Done
+            <span className={`${baseClasses} bg-green-50 text-green-700 border-green-200`}>
+                <CheckCircle2 size={12} className="flex-shrink-0" /> Done
             </span>
         );
         case 'IN_PROGRESS': return (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                <Clock size={12} /> In Progress
+            <span className={`${baseClasses} bg-blue-50 text-blue-700 border-blue-200`}>
+                <Clock size={12} className="flex-shrink-0" /> In Progress
             </span>
         );
         case 'ARCHIVED': return (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                <Archive size={12} /> Archived
+            <span className={`${baseClasses} bg-slate-100 text-slate-600 border-slate-200`}>
+                <Archive size={12} className="flex-shrink-0" /> Archived
             </span>
         );
         default: return (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                <Circle size={12} /> To Do
+            <span className={`${baseClasses} bg-slate-100 text-slate-600 border-slate-200`}>
+                <Circle size={12} className="flex-shrink-0" /> To Do
             </span>
         );
     }
+  };
+
+  const getFileIcon = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    if (['ppt', 'pptx'].includes(ext || '')) return <FileText className="text-orange-500" size={16} />;
+    if (['xls', 'xlsx', 'csv'].includes(ext || '')) return <FileSpreadsheet className="text-green-600" size={16} />;
+    if (['doc', 'docx'].includes(ext || '')) return <FileText className="text-blue-600" size={16} />;
+    if (['pdf'].includes(ext || '')) return <FileText className="text-red-500" size={16} />;
+    if (['zip', 'rar'].includes(ext || '')) return <FileCode className="text-yellow-600" size={16} />;
+    if (['mp4', 'avi', 'mov'].includes(ext || '')) return <Video className="text-purple-600" size={16} />;
+    if (['jpg', 'jpeg', 'png', 'gif'].includes(ext || '')) return <ImageIcon className="text-indigo-500" size={16} />;
+    return <FileIcon className="text-slate-400" size={16} />;
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   const getUserAvatar = (name: string | undefined) => {
@@ -342,6 +440,20 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
         </div>
         
         <div className="flex items-center gap-4">
+          
+          <div className="relative hidden md:block">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search size={16} className="text-slate-400" />
+            </div>
+            <input 
+              type="text"
+              placeholder="Search issues..."
+              className="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-48 focus:w-64 transition-all"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
           <button
             onClick={() => {
               setShowArchived(!showArchived);
@@ -433,6 +545,13 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                       
                       <h4 className="font-medium text-slate-800 mb-3 line-clamp-2">{issue.title}</h4>
                       
+                      {issue.attachments && issue.attachments.length > 0 && (
+                        <div className="mb-3 flex items-center gap-2 text-xs text-slate-500 bg-slate-50 p-1.5 rounded border border-slate-100">
+                          <Paperclip size={12} />
+                          <span>{issue.attachments.length} attachment{issue.attachments.length > 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between mt-auto">
                         <div className="flex items-center gap-2">
                           <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded border ${getPriorityColor(issue.priority)}`}>
@@ -444,8 +563,8 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                               </span>
                           ) : null}
                           {issue.dueDate && (
-                             <span className="text-[10px] flex items-center gap-0.5 text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
-                                <Calendar size={10} /> {new Date(issue.dueDate).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}
+                             <span className="text-[10px] flex items-center gap-0.5 text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap">
+                                <Calendar size={10} className="flex-shrink-0" /> {new Date(issue.dueDate).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}
                              </span>
                           )}
                         </div>
@@ -455,7 +574,7 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                   ))}
                   {columnIssues.length === 0 && (
                     <div className="h-24 border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center text-slate-400 text-sm">
-                      Drag items here
+                      {searchQuery ? 'No matches' : 'Drag items here'}
                     </div>
                   )}
                 </div>
@@ -489,7 +608,7 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                                        <p>No archived issues found.</p>
                                     </div>
                                   ) : (
-                                    'No active issues found. Create one to get started!'
+                                    searchQuery ? 'No issues match your search.' : 'No active issues found. Create one to get started!'
                                   )}
                                </td>
                            </tr>
@@ -503,8 +622,13 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                                     <td className="p-4 text-xs font-mono text-slate-500 font-medium">{issue.key}</td>
                                     <td className="p-4">
                                         <p className="text-sm font-medium text-slate-800 truncate max-w-xs md:max-w-md">{issue.title}</p>
+                                        {issue.attachments && issue.attachments.length > 0 && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 mt-0.5 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                              <Paperclip size={10} /> {issue.attachments.length}
+                                            </span>
+                                        )}
                                         {issue.reopenCount && issue.reopenCount > 0 ? (
-                                           <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 mt-0.5">
+                                           <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 mt-0.5 ml-2">
                                               <RotateCcw size={10} /> Reopened {issue.reopenCount}x
                                            </span>
                                         ) : null}
@@ -525,10 +649,10 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                                             </span>
                                         </div>
                                     </td>
-                                    <td className="p-4 text-xs text-slate-500">
+                                    <td className="p-4 text-xs text-slate-500 whitespace-nowrap">
                                        {issue.dueDate ? new Date(issue.dueDate).toLocaleDateString() : '-'}
                                     </td>
-                                    <td className="p-4 text-xs text-slate-500">
+                                    <td className="p-4 text-xs text-slate-500 whitespace-nowrap">
                                         {new Date(issue.createdAt).toLocaleDateString()}
                                     </td>
                                     <td className="p-4 text-right">
@@ -551,7 +675,7 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
       {/* Create Issue Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 animate-fade-in-up">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 animate-fade-in-up max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="flex justify-between items-start mb-4">
                <h3 className="text-xl font-bold text-slate-800">Create New Issue</h3>
                <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
@@ -577,6 +701,47 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                 />
+              </div>
+
+              {/* Attachment Section */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                  Attachments (Planning/Review)
+                </label>
+                <div 
+                  onClick={() => attachmentInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center cursor-pointer hover:bg-slate-50 transition-colors"
+                >
+                  <input 
+                    type="file"
+                    multiple
+                    className="hidden"
+                    ref={attachmentInputRef}
+                    onChange={handleAttachmentSelect}
+                    accept=".ppt,.pptx,.xlsx,.xls,.doc,.docx,.pdf,.zip,.jpg,.jpeg,.png,.mp4,.avi"
+                  />
+                  <div className="flex flex-col items-center gap-1 text-slate-500">
+                    <Paperclip size={20} />
+                    <span className="text-xs">Click to attach PPT, Excel, Video, etc.</span>
+                  </div>
+                </div>
+
+                {newAttachments.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {newAttachments.map(file => (
+                      <div key={file.id} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                        <div className="flex items-center gap-2 truncate">
+                           {getFileIcon(file.name)}
+                           <span className="truncate max-w-[180px]">{file.name}</span>
+                           <span className="text-xs text-slate-400">({formatFileSize(file.size)})</span>
+                        </div>
+                        <button onClick={() => removeNewAttachment(file.id)} className="text-slate-400 hover:text-red-500">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-4">
@@ -670,7 +835,7 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
             <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                {/* Left: Main Content */}
                <div className="flex-1 p-6 overflow-y-auto border-r border-slate-100 custom-scrollbar">
-                  <div className="mb-8">
+                  <div className="mb-6">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Description</label>
                     <textarea 
                       className="w-full min-h-[120px] p-4 text-sm text-slate-700 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y leading-relaxed"
@@ -679,9 +844,36 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                       placeholder="Add a description..."
                     />
                   </div>
+
+                  {/* Attachments Section in Detail View */}
+                  {selectedIssue.attachments && selectedIssue.attachments.length > 0 && (
+                     <div className="mb-8 bg-slate-50 rounded-lg border border-slate-200 p-4">
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                          <Paperclip size={14} /> Attached Planning Documents
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                           {selectedIssue.attachments.map(att => (
+                              <button
+                                key={att.id}
+                                onClick={() => downloadAttachment(att)}
+                                className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-all text-left group"
+                              >
+                                 <div className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg group-hover:bg-white transition-colors">
+                                    {getFileIcon(att.name)}
+                                 </div>
+                                 <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-slate-700 truncate">{att.name}</p>
+                                    <p className="text-[10px] text-slate-400">{formatFileSize(att.size)}</p>
+                                 </div>
+                                 <Download size={16} className="text-slate-300 group-hover:text-blue-500" />
+                              </button>
+                           ))}
+                        </div>
+                     </div>
+                  )}
                   
                   {/* Comments Section */}
-                  <div className="mt-8">
+                  <div className="mt-8 border-t border-slate-100 pt-8">
                     <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
                       <MessageSquare size={16} /> Comments ({selectedIssue.comments?.length || 0})
                     </h4>
@@ -802,16 +994,18 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                           onClick={() => setShowStatusMenu(!showStatusMenu)}
                           className="relative z-50 w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none flex items-center justify-between hover:bg-slate-50 transition-colors"
                         >
-                           <div className="flex items-center gap-2">
-                              {getStatusIcon(selectedIssue.status)}
-                              <span>
+                           <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <div className="flex-shrink-0 flex items-center justify-center">
+                                 {getStatusIcon(selectedIssue.status)}
+                              </div>
+                              <span className="truncate">
                                 {selectedIssue.status === 'TODO' && 'To Do'}
                                 {selectedIssue.status === 'IN_PROGRESS' && 'In Progress'}
                                 {selectedIssue.status === 'DONE' && 'Done'}
                                 {selectedIssue.status === 'ARCHIVED' && 'Archived'}
                               </span>
                            </div>
-                           <ChevronDown size={14} className={`text-slate-400 transition-transform hidden md:block ${showStatusMenu ? 'rotate-180' : ''}`}/>
+                           <ChevronDown size={14} className={`text-slate-400 transition-transform ml-2 flex-shrink-0 ${showStatusMenu ? 'rotate-180' : ''}`}/>
                         </button>
 
                         {showStatusMenu && (
@@ -827,14 +1021,14 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                                      ${selectedIssue.status === status ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-700'}
                                    `}
                                 >
-                                   {getStatusIcon(status)}
-                                   <span className="flex-1">
+                                   <div className="flex-shrink-0">{getStatusIcon(status)}</div>
+                                   <span className="flex-1 truncate">
                                      {status === 'TODO' && 'To Do'}
                                      {status === 'IN_PROGRESS' && 'In Progress'}
                                      {status === 'DONE' && 'Done'}
                                      {status === 'ARCHIVED' && 'Archived'}
                                    </span>
-                                   {selectedIssue.status === status && <CheckCircle2 size={14} />}
+                                   {selectedIssue.status === status && <CheckCircle2 size={14} className="flex-shrink-0" />}
                                 </button>
                             ))}
                           </div>
@@ -955,6 +1149,39 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                  </div>
                </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {issueToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in-up">
+             <div className="p-6 text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-red-50">
+                   <AlertTriangle size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Issue?</h3>
+                <p className="text-slate-500 text-sm mb-6">
+                  This action cannot be undone.<br/>
+                  The issue and all its comments will be permanently removed.
+                </p>
+                
+                <div className="flex gap-3">
+                   <button 
+                     onClick={() => setIssueToDelete(null)}
+                     className="flex-1 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors"
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     onClick={confirmDelete}
+                     className="flex-1 py-2.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors shadow-sm"
+                   >
+                     Delete
+                   </button>
+                </div>
+             </div>
           </div>
         </div>
       )}

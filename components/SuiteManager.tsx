@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { TestSuite, TestCase, User, Role } from '../types';
 import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle } from 'lucide-react';
@@ -92,11 +93,15 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
             ...suite,
             cases: [...suite.cases, ...newCases as TestCase[]]
           };
-          if (!suite.targetConfig && !importMode) {
+          
+          // Always persist the context used for generation to the suite config
+          if (!importMode) {
              updatedSuite.targetConfig = {
                appType,
                appAddress: appContextValue,
-               testEmail
+               testEmail,
+               executionMode: suite.targetConfig?.executionMode || 'MANUAL',
+               mockAssets: suite.targetConfig?.mockAssets || []
              };
           }
           return updatedSuite;
@@ -120,6 +125,22 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     genOpRef.current = 0; 
     setIsGenerating(false);
     setShowPromptModal(false);
+  };
+
+  // --- TEST CASE MANAGEMENT ---
+  const handleDeleteTestCase = (caseId: string) => {
+    if (!canWrite) return;
+    if (confirm('Are you sure you want to delete this test case?')) {
+      setSuites(prevSuites => prevSuites.map(s => {
+        if (s.id === activeSuite.id) {
+          return {
+            ...s,
+            cases: s.cases.filter(c => c.id !== caseId)
+          };
+        }
+        return s;
+      }));
+    }
   };
 
   // --- RUN CONFIGURATION LOGIC ---
@@ -233,8 +254,23 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
   };
 
   const openGenerateModal = () => {
-    resetModalState();
+    // Reset inputs
+    setPrompt('');
     setImportMode(false);
+    setAvailableSheets([]);
+    setCurrentFile(null);
+    
+    // Pre-fill from existing config if available to streamline the process
+    if (activeSuite.targetConfig) {
+      setAppType(activeSuite.targetConfig.appType);
+      setAppContextValue(activeSuite.targetConfig.appAddress);
+      setTestEmail(activeSuite.targetConfig.testEmail || '');
+    } else {
+      setAppType('WEB');
+      setAppContextValue('');
+      setTestEmail('');
+    }
+
     setShowPromptModal(true);
   };
 
@@ -323,7 +359,13 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                   </div>
                 ) : (
                   activeSuite.cases.map((testCase, index) => (
-                    <TestCaseCard key={testCase.id} testCase={testCase} index={index} readOnly={!canWrite} />
+                    <TestCaseCard 
+                      key={testCase.id} 
+                      testCase={testCase} 
+                      index={index} 
+                      readOnly={!canWrite}
+                      onDelete={() => handleDeleteTestCase(testCase.id)}
+                    />
                   ))
                 )}
               </div>
@@ -676,11 +718,11 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
   );
 };
 
-const TestCaseCard: React.FC<{ testCase: TestCase; index: number; readOnly?: boolean }> = ({ testCase, index, readOnly }) => {
+const TestCaseCard: React.FC<{ testCase: TestCase; index: number; readOnly?: boolean; onDelete?: () => void }> = ({ testCase, index, readOnly, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow group">
       <div 
         className="p-4 cursor-pointer flex items-center justify-between hover:bg-slate-50"
         onClick={() => setExpanded(!expanded)}
@@ -704,8 +746,22 @@ const TestCaseCard: React.FC<{ testCase: TestCase; index: number; readOnly?: boo
             </div>
           </div>
         </div>
-        <div className="text-slate-400">
-          {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+        <div className="flex items-center gap-2">
+            {!readOnly && onDelete && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                className="p-2 text-slate-300 hover:text-red-500 rounded-full hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                title="Delete Test Case"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+            <div className="text-slate-400">
+              {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </div>
         </div>
       </div>
       

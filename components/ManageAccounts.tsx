@@ -1,7 +1,7 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { User } from '../types';
-import { Trash2, ShieldAlert, Mail, Briefcase, User as UserIcon } from 'lucide-react';
+import { Trash2, ShieldAlert, Mail, Briefcase, User as UserIcon, AlertTriangle, X } from 'lucide-react';
 
 interface ManageAccountsProps {
   users: User[];
@@ -10,6 +10,15 @@ interface ManageAccountsProps {
 }
 
 const ManageAccounts: React.FC<ManageAccountsProps> = ({ users, onDeleteUser, currentUser }) => {
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+
+  const handleDeleteConfirm = () => {
+    if (userToDelete) {
+      onDeleteUser(userToDelete.id);
+      setUserToDelete(null);
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto p-6 animate-fade-in">
       <div className="mb-8">
@@ -70,11 +79,7 @@ const ManageAccounts: React.FC<ManageAccountsProps> = ({ users, onDeleteUser, cu
                     <td className="p-4 text-right">
                       {!isMe && !isAdmin && (
                         <button 
-                          onClick={() => {
-                            if (confirm(`Are you sure you want to delete ${user.name}? This action cannot be undone.`)) {
-                              onDeleteUser(user.id);
-                            }
-                          }}
+                          onClick={() => setUserToDelete(user)}
                           className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
                           title="Delete Account"
                         >
@@ -92,6 +97,39 @@ const ManageAccounts: React.FC<ManageAccountsProps> = ({ users, onDeleteUser, cu
           </table>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {userToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in-up">
+             <div className="p-6 text-center">
+                <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-red-50">
+                   <AlertTriangle size={32} />
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Account?</h3>
+                <p className="text-slate-500 text-sm mb-6">
+                  Are you sure you want to remove <b>{userToDelete.name}</b>?<br/>
+                  This action cannot be undone and they will lose access immediately.
+                </p>
+                
+                <div className="flex gap-3">
+                   <button 
+                     onClick={() => setUserToDelete(null)}
+                     className="flex-1 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors"
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     onClick={handleDeleteConfirm}
+                     className="flex-1 py-2.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors shadow-sm"
+                   >
+                     Delete
+                   </button>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

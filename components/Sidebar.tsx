@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Layers, Trello, UserPlus, ChevronUp, User as UserIcon, X, Mail, FolderPlus, ChevronsUpDown, Bell, Key, ShieldAlert, Briefcase, UserCog, Users } from 'lucide-react';
+import { LayoutDashboard, Layers, Trello, UserPlus, ChevronUp, User as UserIcon, X, Mail, FolderPlus, ChevronsUpDown, Bell, Key, ShieldAlert, Briefcase, UserCog, Users, FolderCog } from 'lucide-react';
 import { ViewState, User, TestSuite } from '../types';
 
 interface SidebarProps {
@@ -74,24 +74,37 @@ const Sidebar: React.FC<SidebarProps> = ({
      { id: 'MY_PAGE' as ViewState, icon: UserCog, label: 'My Page' }
   ];
 
+  // Added MANAGE_PROJECTS to admin items
   const adminItems = isGlobalAdmin ? [
-     { id: 'MANAGE_ACCOUNTS' as ViewState, icon: Users, label: 'Manage Accounts' }
+     { id: 'MANAGE_ACCOUNTS' as ViewState, icon: Users, label: 'Manage Accounts' },
+     { id: 'MANAGE_PROJECTS' as ViewState, icon: FolderCog, label: 'Manage Projects' }
   ] : [];
 
   const handleRegister = () => {
     setRegError('');
-    if (!regName || !regEmail) {
+    
+    // Trim inputs to remove accidental leading/trailing spaces
+    const trimmedName = regName.trim();
+    const trimmedEmail = regEmail.trim();
+
+    if (!trimmedName || !trimmedEmail) {
       setRegError('Please fill in all fields');
       return;
     }
 
-    // Duplicate Check
-    if (users.some(u => u.email.toLowerCase() === regEmail.toLowerCase())) {
+    // Duplicate Check: Email
+    if (users.some(u => u.email.toLowerCase() === trimmedEmail.toLowerCase())) {
        setRegError('This email is already registered.');
        return;
     }
 
-    onRegisterUser(regName, regEmail, regAvatar, regRole);
+    // Duplicate Check: Name
+    if (users.some(u => u.name.toLowerCase() === trimmedName.toLowerCase())) {
+       setRegError('This user name is already taken.');
+       return;
+    }
+
+    onRegisterUser(trimmedName, trimmedEmail, regAvatar, regRole);
     setShowRegisterModal(false);
     setRegName('');
     setRegEmail('');

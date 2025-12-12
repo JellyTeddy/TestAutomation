@@ -7,8 +7,9 @@ import TestRunner from './components/TestRunner';
 import IssueBoard from './components/IssueBoard';
 import MyPage from './components/MyPage';
 import ManageAccounts from './components/ManageAccounts';
+import ManageProjects from './components/ManageProjects'; // Imported new component
 import { ViewState, TestSuite, TestRun, Issue, Notification, User, Role } from './types';
-import { Bell, X, Check, FolderPlus, Layers, Trash2, Settings, Clock } from 'lucide-react';
+import { Bell, X, Check, FolderPlus, Layers, Trash2, Settings, Clock, Hash } from 'lucide-react';
 
 // Mock Initial Data
 const MOCK_USERS: User[] = [
@@ -23,6 +24,8 @@ const MOCK_SUITES: TestSuite[] = [
     name: 'Authentication Flow',
     description: 'Login, Registration, and Password Reset scenarios',
     createdAt: new Date().toISOString(),
+    issuePrefix: 'ISS',
+    nextIssueNumber: 3,
     permissions: {
       'u1': 'ADMIN', // Tester Bear is Admin of this project
       'u2': 'OBSERVER' // Dave is Observer
@@ -68,7 +71,7 @@ const MOCK_ISSUES: Issue[] = [
   {
     id: 'i1',
     suiteId: '1',
-    key: 'ISS-1',
+    key: 'ISS-0001',
     title: 'Login button misalignment on IE11',
     description: 'The login button is shifted 10px to the left.',
     status: 'TODO',
@@ -80,7 +83,7 @@ const MOCK_ISSUES: Issue[] = [
   {
     id: 'i2',
     suiteId: '1',
-    key: 'ISS-2',
+    key: 'ISS-0002',
     title: 'Crash when uploading 50MB file',
     description: 'App crashes immediately.',
     status: 'IN_PROGRESS',
@@ -102,6 +105,7 @@ const App: React.FC = () => {
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [newProjectPrefix, setNewProjectPrefix] = useState('');
 
   // User & Notification State
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
@@ -261,11 +265,18 @@ const App: React.FC = () => {
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
 
+    // Default prefix if not provided (First 3 chars of name)
+    const prefix = newProjectPrefix.trim() 
+       ? newProjectPrefix.trim().toUpperCase() 
+       : newProjectName.slice(0, 3).toUpperCase().replace(/[^A-Z]/g, 'PRJ');
+
     const newSuite: TestSuite = {
       id: crypto.randomUUID(),
       name: newProjectName,
       description: newProjectDesc || 'No description provided.',
       createdAt: new Date().toISOString(),
+      issuePrefix: prefix,
+      nextIssueNumber: 1, // Start sequential numbering at 1
       cases: [],
       permissions: {
         [currentUser.id]: 'ADMIN' // Creator gets Admin
@@ -277,6 +288,27 @@ const App: React.FC = () => {
     setShowCreateProjectModal(false);
     setNewProjectName('');
     setNewProjectDesc('');
+    setNewProjectPrefix('');
+  };
+
+  const handleUpdateSuite = (updatedSuite: TestSuite) => {
+    setSuites(prev => prev.map(s => s.id === updatedSuite.id ? updatedSuite : s));
+  };
+
+  const handleDeleteSuite = (suiteId: string) => {
+    // Remove issues associated with the suite
+    setIssues(prev => prev.filter(i => i.suiteId !== suiteId));
+    // Remove runs associated with the suite
+    setRuns(prev => prev.filter(r => r.suiteId !== suiteId));
+    // Remove the suite itself
+    setSuites(prev => prev.filter(s => s.id !== suiteId));
+    
+    // If deleted suite was active, reset active suite
+    if (activeSuiteId === suiteId) {
+      setActiveSuiteId(null);
+    }
+    
+    handleAddNotification("Project deleted successfully.", currentUser.id);
   };
 
   const handleUpdateUser = (updatedUser: User) => {
@@ -381,7 +413,7 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
           <div className="max-w-7xl mx-auto h-full">
-            {activeSuite || ['NOTIFICATIONS', 'MY_PAGE', 'MANAGE_ACCOUNTS'].includes(view) ? (
+            {activeSuite || ['NOTIFICATIONS', 'MY_PAGE', 'MANAGE_ACCOUNTS', 'MANAGE_PROJECTS'].includes(view) ? (
               <>
                 {view === 'DASHBOARD' && activeSuite && (
                   <Dashboard 
@@ -410,6 +442,7 @@ const App: React.FC = () => {
                     issues={filteredIssues} 
                     setIssues={setIssues} 
                     onNotify={handleAddNotification}
+                    onUpdateSuite={handleUpdateSuite}
                     users={users}
                     currentUser={currentUser}
                   />
@@ -484,6 +517,17 @@ const App: React.FC = () => {
                     currentUser={currentUser}
                   />
                 )}
+
+                {/* Manage Projects View (Admin Only) */}
+                {view === 'MANAGE_PROJECTS' && isGlobalAdmin && (
+                   <ManageProjects 
+                      suites={suites}
+                      onDeleteSuite={handleDeleteSuite}
+                      onUpdateSuite={handleUpdateSuite}
+                      onCreateProject={() => setShowCreateProjectModal(true)}
+                      users={users}
+                   />
+                )}
               </>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-slate-400">
@@ -541,6 +585,24 @@ const App: React.FC = () => {
                     autoFocus
                   />
                </div>
+               
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Issue Key Prefix</label>
+                  <div className="relative">
+                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                       <Hash size={14} className="text-slate-400"/>
+                     </div>
+                     <input 
+                       className="w-full border border-slate-300 rounded-lg pl-9 p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                       placeholder="e.g. AUTH (Issues will be AUTH-0001, AUTH-0002...)"
+                       value={newProjectPrefix}
+                       onChange={(e) => setNewProjectPrefix(e.target.value.toUpperCase())}
+                       maxLength={6}
+                     />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Leave empty to generate from name (e.g. "MOB").</p>
+               </div>
+
                <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Description</label>
                   <textarea 

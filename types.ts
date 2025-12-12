@@ -1,5 +1,4 @@
 
-
 export type TestStatus = 'IDLE' | 'PASSED' | 'FAILED' | 'SKIPPED';
 
 export interface TestStep {
@@ -25,6 +24,8 @@ export interface TestSuite {
   createdAt: string;
   cases: TestCase[];
   permissions?: Record<string, Role>; // Map userId to Role
+  issuePrefix?: string; // Custom prefix for issues (e.g. "AUTH")
+  nextIssueNumber?: number; // Counter for the next issue (e.g. 1)
   targetConfig?: {
     appType: 'WEB' | 'DESKTOP';
     appAddress: string;
@@ -64,6 +65,14 @@ export interface Comment {
   timestamp: string;
 }
 
+export interface Attachment {
+  id: string;
+  name: string;
+  type: string; // MIME type
+  size: number; // Bytes
+  data: string; // Base64 string or URL
+}
+
 export interface Issue {
   id: string;
   suiteId: string; // Link issue to a specific project
@@ -78,6 +87,7 @@ export interface Issue {
   createdAt: string;
   dueDate?: string; // ISO Date string (YYYY-MM-DD)
   comments?: Comment[];
+  attachments?: Attachment[]; // New field for planning documents/files
 }
 
 export interface Notification {
@@ -97,4 +107,4 @@ export interface User {
   jobRole?: string; // New field for job title/role
 }
 
-export type ViewState = 'DASHBOARD' | 'SUITES' | 'RUNNER' | 'HISTORY' | 'ISSUES' | 'NOTIFICATIONS' | 'MY_PAGE' | 'MANAGE_ACCOUNTS';
+export type ViewState = 'DASHBOARD' | 'SUITES' | 'RUNNER' | 'HISTORY' | 'ISSUES' | 'NOTIFICATIONS' | 'MY_PAGE' | 'MANAGE_ACCOUNTS' | 'MANAGE_PROJECTS';
