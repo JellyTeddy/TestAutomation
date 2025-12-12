@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Issue, IssueStatus, IssuePriority, User, TestSuite, Comment } from '../types';
 import { Plus, MoreHorizontal, Calendar, Trash2, X, AlertCircle, ChevronDown, Clock, CheckCircle2, Circle, RotateCcw, Columns, List, Archive, ArchiveRestore, Send, Paperclip, Image as ImageIcon, MessageSquare } from 'lucide-react';
@@ -7,7 +8,7 @@ interface IssueBoardProps {
   activeSuite: TestSuite;
   issues: Issue[];
   setIssues: React.Dispatch<React.SetStateAction<Issue[]>>;
-  onNotify?: (message: string) => void;
+  onNotify?: (message: string, recipientId: string) => void;
   users: User[];
   currentUser: User;
 }
@@ -37,6 +38,10 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
   const [newCommentText, setNewCommentText] = useState('');
   const [newCommentImage, setNewCommentImage] = useState<string | undefined>(undefined);
   const commentFileRef = useRef<HTMLInputElement>(null);
+
+  // Mention State
+  const [showMentionList, setShowMentionList] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
 
   // Set default assignee when currentUser changes or component mounts
   useEffect(() => {
@@ -75,6 +80,14 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
     setIssues(prevIssues => [...prevIssues, newIssue]);
     setShowCreateModal(false);
     resetForm();
+
+    // Notify Assignee if it's someone else
+    if (onNotify && newAssignee && newAssignee !== currentUser.name) {
+       const assignedUser = users.find(u => u.name === newAssignee);
+       if (assignedUser) {
+         onNotify(`You have been assigned to new issue ${newIssue.key}: ${newIssue.title}`, assignedUser.id);
+       }
+    }
   };
 
   const updateIssue = (updated: Issue) => {
@@ -87,8 +100,11 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
 
     // Check for assignee change notification
     if (oldIssue && onNotify) {
-      if (oldIssue.assignee !== currentUser.name && updated.assignee === currentUser.name) {
-        onNotify(`You have been assigned to issue ${updated.key}: ${updated.title}`);
+      if (oldIssue.assignee !== updated.assignee && updated.assignee !== currentUser.name) {
+        const assignedUser = users.find(u => u.name === updated.assignee);
+        if (assignedUser) {
+           onNotify(`You have been assigned to issue ${updated.key}: ${updated.title}`, assignedUser.id);
+        }
       }
     }
 
@@ -161,6 +177,38 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
     }
   };
 
+  const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setNewCommentText(val);
+
+    // Basic detection for @mention at end of string
+    const lastWord = val.split(/[\s\n]+/).pop();
+    if (lastWord && lastWord.startsWith('@')) {
+       setShowMentionList(true);
+       setMentionQuery(lastWord.substring(1));
+    } else {
+       setShowMentionList(false);
+    }
+  };
+
+  const selectMention = (userName: string) => {
+    // Replace the last @query with @Name
+    const words = newCommentText.split(/([\s\n]+)/); // Split keeping delimiters
+    let newText = "";
+    
+    // Find the last segment that is our mention query
+    let found = false;
+    for (let i = words.length - 1; i >= 0; i--) {
+        if (!found && words[i].startsWith('@')) {
+            words[i] = `@${userName} `;
+            found = true;
+        }
+    }
+    
+    setNewCommentText(words.join(''));
+    setShowMentionList(false);
+  };
+
   const handleAddComment = () => {
     if ((!newCommentText.trim() && !newCommentImage) || !selectedIssue) return;
 
@@ -179,18 +227,33 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
       comments: [...(selectedIssue.comments || []), newComment]
     };
 
-    // Check for Tags/Mentions
+    // Check for Tags/Mentions and Notify
     if (onNotify) {
-      users.forEach(user => {
-        if (newCommentText.includes(`@${user.name}`)) {
-          onNotify(`💬 ${currentUser.name} mentioned you in comments on ${selectedIssue.key}`);
-        }
-      });
+       // Notify Issue Assignee if someone else comments
+       if (selectedIssue.assignee && selectedIssue.assignee !== currentUser.name) {
+          const owner = users.find(u => u.name === selectedIssue.assignee);
+          if (owner) {
+             onNotify(`💬 New comment on ${selectedIssue.key} by ${currentUser.name}`, owner.id);
+          }
+       }
+
+       // Notify Mentioned Users
+       // Simple regex to find @Name patterns. 
+       // Note: This relies on exact name matching. Robust systems use IDs in text.
+       users.forEach(user => {
+         if (newCommentText.includes(`@${user.name}`)) {
+           // Avoid double notification if they are the assignee
+           if (user.name !== selectedIssue.assignee && user.id !== currentUser.id) {
+             onNotify(`👋 You were mentioned in ${selectedIssue.key} by ${currentUser.name}`, user.id);
+           }
+         }
+       });
     }
 
     updateIssue(updatedIssue);
     setNewCommentText('');
     setNewCommentImage(undefined);
+    setShowMentionList(false);
   };
 
   // --- Helper Renderers ---
@@ -256,6 +319,9 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
       </div>
     );
   };
+
+  // Filter users for mentions
+  const filteredUsers = users.filter(u => u.name.toLowerCase().includes(mentionQuery.toLowerCase()));
 
   return (
     <div className="h-full flex flex-col animate-fade-in relative">
@@ -648,18 +714,36 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                     </div>
 
                     {/* Comment Input */}
-                    <div className="flex gap-3 bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                    <div className="flex gap-3 bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative">
                        <div className="w-8 h-8 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-sm flex-shrink-0">
                          {currentUser.avatar}
                        </div>
-                       <div className="flex-1 space-y-3">
+                       <div className="flex-1 space-y-3 relative">
                           <textarea 
                              className="w-full text-sm outline-none resize-none bg-transparent placeholder:text-slate-400"
-                             placeholder="Write a comment... (Tip: Use @Name to tag users)"
+                             placeholder="Write a comment... (Type @ to mention)"
                              rows={2}
                              value={newCommentText}
-                             onChange={(e) => setNewCommentText(e.target.value)}
+                             onChange={handleCommentChange}
                           />
+                          
+                          {/* Mention Dropdown */}
+                          {showMentionList && (
+                             <div className="absolute bottom-full left-0 mb-2 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 overflow-hidden">
+                                {filteredUsers.length > 0 ? filteredUsers.map(user => (
+                                   <div 
+                                      key={user.id}
+                                      onClick={() => selectMention(user.name)}
+                                      className="p-2 hover:bg-slate-100 cursor-pointer flex items-center gap-2 text-sm"
+                                   >
+                                      <span>{user.avatar}</span>
+                                      <span className="font-medium text-slate-700">{user.name}</span>
+                                   </div>
+                                )) : (
+                                   <div className="p-2 text-xs text-slate-400 text-center">No user found</div>
+                                )}
+                             </div>
+                          )}
                           
                           {newCommentImage && (
                             <div className="relative inline-block">
@@ -727,7 +811,7 @@ const IssueBoard: React.FC<IssueBoardProps> = ({ activeSuite, issues, setIssues,
                                 {selectedIssue.status === 'ARCHIVED' && 'Archived'}
                               </span>
                            </div>
-                           <ChevronDown size={14} className={`text-slate-400 transition-transform ${showStatusMenu ? 'rotate-180' : ''}`}/>
+                           <ChevronDown size={14} className={`text-slate-400 transition-transform hidden md:block ${showStatusMenu ? 'rotate-180' : ''}`}/>
                         </button>
 
                         {showStatusMenu && (

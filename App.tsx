@@ -1,12 +1,12 @@
 
-
-
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import SuiteManager from './components/SuiteManager';
 import TestRunner from './components/TestRunner';
 import IssueBoard from './components/IssueBoard';
+import MyPage from './components/MyPage';
+import ManageAccounts from './components/ManageAccounts';
 import { ViewState, TestSuite, TestRun, Issue, Notification, User, Role } from './types';
 import { Bell, X, Check, FolderPlus, Layers, Trash2, Settings, Clock } from 'lucide-react';
 
@@ -115,17 +115,16 @@ const App: React.FC = () => {
     const savedRuns = localStorage.getItem('autotest_runs');
     const savedIssues = localStorage.getItem('autotest_issues');
     const savedUsers = localStorage.getItem('autotest_users');
+    const savedNotifs = localStorage.getItem('autotest_notifs');
     
     if (savedSuites) {
       const parsedSuites = JSON.parse(savedSuites);
       setSuites(parsedSuites);
       // Auto-select first available suite
       if (parsedSuites.length > 0 && !activeSuiteId) {
-        // Simple logic: select first. Better: select first permitted.
         setActiveSuiteId(parsedSuites[0].id);
       }
     } else {
-      // Init mock data
       if (MOCK_SUITES.length > 0) setActiveSuiteId(MOCK_SUITES[0].id);
     }
 
@@ -141,6 +140,7 @@ const App: React.FC = () => {
         if (found) setCurrentUser(found);
       }
     }
+    if (savedNotifs) setNotifications(JSON.parse(savedNotifs));
   }, []);
 
   // Save to local storage on change
@@ -160,6 +160,10 @@ const App: React.FC = () => {
     localStorage.setItem('autotest_users', JSON.stringify(users));
   }, [users]);
 
+  useEffect(() => {
+    localStorage.setItem('autotest_notifs', JSON.stringify(notifications));
+  }, [notifications]);
+
   // Derived State
   const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
   
@@ -175,6 +179,10 @@ const App: React.FC = () => {
   // Filter data by active suite
   const filteredRuns = runs.filter(r => r.suiteId === activeSuite?.id);
   const filteredIssues = issues.filter(i => i.suiteId === activeSuite?.id);
+
+  // Filter Notifications by Current User
+  const myNotifications = notifications.filter(n => n.recipientId === currentUser.id);
+  const unreadCount = myNotifications.filter(n => !n.read).length;
 
   const handleRunSuite = (suite: TestSuite) => {
     setActiveSuiteId(suite.id);
@@ -192,18 +200,34 @@ const App: React.FC = () => {
     const formattedPassRate = passRate % 1 === 0 ? passRate.toFixed(0) : passRate.toFixed(1);
     const failCount = Object.values(run.results).filter(r => r.status === 'FAILED').length;
     
-    handleAddNotification(
-      `Test Run "${run.suiteName}" ${isSuccess ? 'PASSED' : 'FAILED'} (${formattedPassRate}%). ${failCount} failures recorded.`
-    );
+    // Notify all members of the suite about the run completion
+    const suite = suites.find(s => s.id === run.suiteId);
+    if (suite && suite.permissions) {
+      Object.keys(suite.permissions).forEach(userId => {
+        handleAddNotification(
+          `Test Run "${run.suiteName}" ${isSuccess ? 'PASSED' : 'FAILED'} (${formattedPassRate}%). ${failCount} failures recorded.`,
+          userId
+        );
+      });
+      // Also notify admin
+      const admin = users.find(u => u.email === 'administrator@autotest.ai');
+      if (admin) {
+        handleAddNotification(
+           `[Admin Alert] Test Run "${run.suiteName}" ${isSuccess ? 'PASSED' : 'FAILED'} (${formattedPassRate}%).`,
+           admin.id
+        );
+      }
+    }
   };
 
   const handleRunCancel = () => {
     setView('SUITES'); // Go back to suite manager
   };
 
-  const handleAddNotification = (message: string) => {
+  const handleAddNotification = (message: string, recipientId: string) => {
     const newNotif: Notification = {
       id: crypto.randomUUID(),
+      recipientId: recipientId,
       message,
       type: 'ASSIGNMENT',
       read: false,
@@ -217,7 +241,7 @@ const App: React.FC = () => {
   };
 
   const clearAll = () => {
-    setNotifications([]);
+    setNotifications(notifications.filter(n => n.recipientId !== currentUser.id));
   };
   
   const handleRegisterUser = (name: string, email: string, avatar: string, jobRole: string) => {
@@ -231,7 +255,7 @@ const App: React.FC = () => {
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
     setCurrentUser(newUser); // Auto switch to new user
-    handleAddNotification(`Welcome ${name}! Your account has been created.`);
+    handleAddNotification(`Welcome ${name}! Your account has been created.`, newUser.id);
   };
 
   const handleCreateProject = () => {
@@ -253,10 +277,18 @@ const App: React.FC = () => {
     setShowCreateProjectModal(false);
     setNewProjectName('');
     setNewProjectDesc('');
-    // NOTE: Notification removed as per request
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const handleUpdateUser = (updatedUser: User) => {
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+    setCurrentUser(updatedUser);
+    handleAddNotification("Profile details updated successfully.", updatedUser.id);
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    if (userId === currentUser.id) return;
+    setUsers(prev => prev.filter(u => u.id !== userId));
+  };
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-900">
@@ -299,18 +331,18 @@ const App: React.FC = () => {
                   <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1">
                     Notifications {currentUser.avatar}
                   </h3>
-                  {notifications.length > 0 && (
+                  {myNotifications.length > 0 && (
                      <button onClick={clearAll} className="text-xs text-slate-400 hover:text-slate-600">Clear all</button>
                   )}
                 </div>
                 <div className="max-h-[300px] overflow-y-auto">
-                  {notifications.length === 0 ? (
+                  {myNotifications.length === 0 ? (
                     <div className="p-8 text-center text-slate-400 text-sm">
                       <div className="text-2xl mb-2 opacity-50">💤</div>
                       No new notifications for {currentUser.name}.
                     </div>
                   ) : (
-                    notifications.map(notif => (
+                    myNotifications.map(notif => (
                       <div 
                         key={notif.id} 
                         className={`p-3 border-b border-slate-50 hover:bg-slate-50 transition-colors flex gap-3 ${notif.read ? 'opacity-60' : 'bg-blue-50/30'}`}
@@ -349,7 +381,7 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-auto p-4 md:p-8">
           <div className="max-w-7xl mx-auto h-full">
-            {activeSuite || view === 'NOTIFICATIONS' ? (
+            {activeSuite || ['NOTIFICATIONS', 'MY_PAGE', 'MANAGE_ACCOUNTS'].includes(view) ? (
               <>
                 {view === 'DASHBOARD' && activeSuite && (
                   <Dashboard 
@@ -393,7 +425,7 @@ const App: React.FC = () => {
                         </h1>
                         <p className="text-slate-500 text-sm mt-1">Updates and alerts for <b>{currentUser.name}</b></p>
                       </div>
-                      {notifications.length > 0 && (
+                      {myNotifications.length > 0 && (
                         <button 
                           onClick={clearAll}
                           className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors text-sm font-medium"
@@ -404,7 +436,7 @@ const App: React.FC = () => {
                     </div>
                     
                     <div className="flex-1 overflow-y-auto">
-                      {notifications.length === 0 ? (
+                      {myNotifications.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400">
                            <Bell size={48} className="mb-4 opacity-20" />
                            <p className="text-lg font-medium text-slate-500">You're all caught up!</p>
@@ -412,7 +444,7 @@ const App: React.FC = () => {
                         </div>
                       ) : (
                         <div className="divide-y divide-slate-50">
-                          {notifications.map(notif => (
+                          {myNotifications.map(notif => (
                             <div key={notif.id} className={`p-6 hover:bg-slate-50 transition-colors flex items-start gap-4 ${notif.read ? 'opacity-75' : 'bg-blue-50/10'}`}>
                                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 mt-1 ${notif.type === 'SYSTEM' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-600'}`}>
                                  {notif.type === 'SYSTEM' ? <Settings size={20}/> : <Bell size={20}/>}
@@ -434,6 +466,23 @@ const App: React.FC = () => {
                       )}
                     </div>
                   </div>
+                )}
+
+                {/* My Page View */}
+                {view === 'MY_PAGE' && (
+                  <MyPage 
+                    currentUser={currentUser} 
+                    onUpdateUser={handleUpdateUser} 
+                  />
+                )}
+
+                {/* Manage Accounts View (Admin Only) */}
+                {view === 'MANAGE_ACCOUNTS' && isGlobalAdmin && (
+                  <ManageAccounts 
+                    users={users} 
+                    onDeleteUser={handleDeleteUser} 
+                    currentUser={currentUser}
+                  />
                 )}
               </>
             ) : (

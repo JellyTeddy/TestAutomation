@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, Layers, Trello, UserPlus, ChevronUp, User as UserIcon, X, Mail, FolderPlus, ChevronsUpDown, Bell, Key, ShieldAlert, Briefcase } from 'lucide-react';
+import { LayoutDashboard, Layers, Trello, UserPlus, ChevronUp, User as UserIcon, X, Mail, FolderPlus, ChevronsUpDown, Bell, Key, ShieldAlert, Briefcase, UserCog, Users } from 'lucide-react';
 import { ViewState, User, TestSuite } from '../types';
 
 interface SidebarProps {
@@ -52,6 +52,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [regEmail, setRegEmail] = useState('');
   const [regAvatar, setRegAvatar] = useState('🐻');
   const [regRole, setRegRole] = useState('QA Engineer');
+  const [regError, setRegError] = useState('');
 
   // Super Admin Login State
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -69,16 +70,34 @@ const Sidebar: React.FC<SidebarProps> = ({
     { id: 'NOTIFICATIONS' as ViewState, icon: Bell, label: 'Notifications' },
   ];
 
+  const userItems = [
+     { id: 'MY_PAGE' as ViewState, icon: UserCog, label: 'My Page' }
+  ];
+
+  const adminItems = isGlobalAdmin ? [
+     { id: 'MANAGE_ACCOUNTS' as ViewState, icon: Users, label: 'Manage Accounts' }
+  ] : [];
+
   const handleRegister = () => {
-    if (regName && regEmail) {
-      onRegisterUser(regName, regEmail, regAvatar, regRole);
-      setShowRegisterModal(false);
-      setRegName('');
-      setRegEmail('');
-      setRegAvatar('🐻');
-      setRegRole('QA Engineer');
-      setShowUserMenu(false);
+    setRegError('');
+    if (!regName || !regEmail) {
+      setRegError('Please fill in all fields');
+      return;
     }
+
+    // Duplicate Check
+    if (users.some(u => u.email.toLowerCase() === regEmail.toLowerCase())) {
+       setRegError('This email is already registered.');
+       return;
+    }
+
+    onRegisterUser(regName, regEmail, regAvatar, regRole);
+    setShowRegisterModal(false);
+    setRegName('');
+    setRegEmail('');
+    setRegAvatar('🐻');
+    setRegRole('QA Engineer');
+    setShowUserMenu(false);
   };
 
   const handleUserClick = (user: User) => {
@@ -188,27 +207,75 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
       
-      <nav className="flex-1 p-4 space-y-3 z-10 overflow-y-auto custom-scrollbar">
-        {navItems.map((item) => {
-          const isActive = currentView === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              disabled={!activeSuiteId && item.id !== 'DASHBOARD' && item.id !== 'NOTIFICATIONS'} 
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 group ${
-                isActive 
-                  ? 'bg-[#FFECB3] text-[#4E342E] shadow-lg transform scale-105 font-bold' 
-                  : 'text-[#D7CCC8] hover:bg-[#8D6E63]/40 hover:text-white hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
-              }`}
-            >
-              <item.icon size={22} className={isActive ? "text-[#5D4037]" : "text-[#D7CCC8] group-hover:text-[#FFECB3] transition-colors"} />
-              <span className="hidden md:block">{item.label}</span>
-              {isActive && <div className="ml-auto text-lg animate-bounce">🧸</div>}
-            </button>
-          );
-        })}
-      </nav>
+      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col justify-between">
+        <nav className="p-4 space-y-3 z-10">
+          <p className="px-4 text-[10px] font-bold text-[#A1887F] uppercase tracking-wider mb-2 mt-2">Projects & Work</p>
+          {navItems.map((item) => {
+            const isActive = currentView === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(item.id)}
+                disabled={!activeSuiteId && item.id !== 'DASHBOARD' && item.id !== 'NOTIFICATIONS'} 
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 group ${
+                  isActive 
+                    ? 'bg-[#FFECB3] text-[#4E342E] shadow-lg transform scale-105 font-bold' 
+                    : 'text-[#D7CCC8] hover:bg-[#8D6E63]/40 hover:text-white hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
+                }`}
+              >
+                <item.icon size={22} className={isActive ? "text-[#5D4037]" : "text-[#D7CCC8] group-hover:text-[#FFECB3] transition-colors"} />
+                <span className="hidden md:block">{item.label}</span>
+                {isActive && <div className="ml-auto text-lg animate-bounce">🧸</div>}
+              </button>
+            );
+          })}
+          
+          <div className="my-4 border-t border-[#8D6E63]/30"></div>
+          
+          <p className="px-4 text-[10px] font-bold text-[#A1887F] uppercase tracking-wider mb-2">Account</p>
+          {userItems.map((item) => {
+            const isActive = currentView === item.id;
+             return (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(item.id)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 group ${
+                  isActive 
+                    ? 'bg-[#FFECB3] text-[#4E342E] shadow-lg transform scale-105 font-bold' 
+                    : 'text-[#D7CCC8] hover:bg-[#8D6E63]/40 hover:text-white hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
+                }`}
+              >
+                <item.icon size={22} className={isActive ? "text-[#5D4037]" : "text-[#D7CCC8] group-hover:text-[#FFECB3] transition-colors"} />
+                <span className="hidden md:block">{item.label}</span>
+              </button>
+            );
+          })}
+          
+          {adminItems.length > 0 && (
+             <>
+               <p className="px-4 text-[10px] font-bold text-[#A1887F] uppercase tracking-wider mb-2 mt-4">Administration</p>
+               {adminItems.map((item) => {
+                const isActive = currentView === item.id;
+                 return (
+                  <button
+                    key={item.id}
+                    onClick={() => onNavigate(item.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 group ${
+                      isActive 
+                        ? 'bg-[#FFECB3] text-[#4E342E] shadow-lg transform scale-105 font-bold' 
+                        : 'text-[#D7CCC8] hover:bg-[#8D6E63]/40 hover:text-white hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
+                    }`}
+                  >
+                    <item.icon size={22} className={isActive ? "text-[#5D4037]" : "text-[#D7CCC8] group-hover:text-[#FFECB3] transition-colors"} />
+                    <span className="hidden md:block">{item.label}</span>
+                  </button>
+                );
+              })}
+             </>
+          )}
+
+        </nav>
+      </div>
 
       <div className="p-4 relative z-10">
         <button 
@@ -352,96 +419,90 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <h3 className="text-lg font-bold text-[#FFECB3]">Create Account</h3>
                 <p className="text-[#D7CCC8] text-xs mt-1">Join the testing team!</p>
               </div>
-              <button onClick={() => setShowRegisterModal(false)} className="text-[#D7CCC8] hover:text-white relative z-10">
+              <button onClick={() => setShowRegisterModal(false)} className="text-[#D7CCC8] hover:text-white transition-colors relative z-10">
                 <X size={20} />
               </button>
             </div>
             
             <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Full Name</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <UserIcon size={16} className="text-[#8D6E63]"/>
+               <div>
+                  <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Full Name</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <UserIcon size={16} className="text-[#8D6E63]"/>
+                    </div>
+                    <input 
+                      autoFocus
+                      className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2 text-sm focus:ring-2 focus:ring-[#5D4037] focus:border-[#5D4037] outline-none text-[#4E342E]"
+                      placeholder="e.g. Alice Smith"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                    />
                   </div>
-                  <input 
-                    autoFocus
-                    className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2.5 text-sm focus:ring-2 focus:ring-[#8D6E63] outline-none text-[#4E342E]"
-                    placeholder="e.g. Quality Queen"
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Email Address</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail size={16} className="text-[#8D6E63]"/>
-                  </div>
-                  <input 
-                    type="email"
-                    className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2.5 text-sm focus:ring-2 focus:ring-[#8D6E63] outline-none text-[#4E342E]"
-                    placeholder="name@company.com"
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                  />
-                </div>
-              </div>
+               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Job Role</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Briefcase size={16} className="text-[#8D6E63]"/>
+               <div>
+                  <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Email Address</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Mail size={16} className="text-[#8D6E63]"/>
+                    </div>
+                    <input 
+                      type="email"
+                      className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2 text-sm focus:ring-2 focus:ring-[#5D4037] focus:border-[#5D4037] outline-none text-[#4E342E]"
+                      placeholder="alice@company.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                    />
                   </div>
-                  <select
-                    className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2.5 text-sm focus:ring-2 focus:ring-[#8D6E63] outline-none text-[#4E342E] bg-white"
-                    value={regRole}
-                    onChange={(e) => setRegRole(e.target.value)}
-                  >
-                    {JOB_ROLES.map(role => (
-                      <option key={role} value={role}>{role}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-[#5D4037] uppercase mb-2">Choose Avatar</label>
-                <div className="grid grid-cols-6 gap-2">
-                  {AVATAR_OPTIONS.map(avatar => (
-                    <button
-                      key={avatar}
-                      onClick={() => setRegAvatar(avatar)}
-                      className={`w-10 h-10 flex items-center justify-center text-xl rounded-full transition-all ${
-                        regAvatar === avatar 
-                          ? 'bg-[#FFECB3] border-2 border-[#5D4037] shadow-sm scale-110' 
-                          : 'bg-[#EFEBE9] border border-[#D7CCC8] hover:bg-[#D7CCC8]'
-                      }`}
+               <div>
+                  <label className="block text-xs font-bold text-[#5D4037] uppercase mb-1">Job Role</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Briefcase size={16} className="text-[#8D6E63]"/>
+                    </div>
+                    <select
+                      className="w-full border border-[#D7CCC8] rounded-xl pl-10 p-2 text-sm focus:ring-2 focus:ring-[#5D4037] focus:border-[#5D4037] outline-none text-[#4E342E] bg-white appearance-none"
+                      value={regRole}
+                      onChange={(e) => setRegRole(e.target.value)}
                     >
-                      {avatar}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                      {JOB_ROLES.map(role => (
+                        <option key={role} value={role}>{role}</option>
+                      ))}
+                    </select>
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                       <ChevronUp size={14} className="text-[#8D6E63] rotate-180"/>
+                    </div>
+                  </div>
+               </div>
 
-              <div className="pt-4 flex gap-3">
-                 <button 
-                   onClick={() => setShowRegisterModal(false)}
-                   className="flex-1 py-2 text-[#8D6E63] hover:bg-[#EFEBE9] rounded-xl text-sm font-bold"
-                 >
-                   Cancel
-                 </button>
-                 <button 
-                   onClick={handleRegister}
-                   disabled={!regName || !regEmail}
-                   className="flex-1 py-2 bg-[#5D4037] hover:bg-[#4E342E] text-[#FFECB3] rounded-xl text-sm font-bold shadow-md disabled:opacity-50"
-                 >
-                   Sign Up
-                 </button>
-              </div>
+               <div>
+                 <label className="block text-xs font-bold text-[#5D4037] uppercase mb-2">Select Avatar</label>
+                 <div className="flex flex-wrap gap-2">
+                   {AVATAR_OPTIONS.map(char => (
+                     <button
+                       key={char}
+                       onClick={() => setRegAvatar(char)}
+                       className={`w-9 h-9 flex items-center justify-center text-lg rounded-full transition-all border-2 ${regAvatar === char ? 'bg-[#FFECB3] border-[#FFCA28] scale-110 shadow-sm' : 'bg-slate-50 border-[#EFEBE9] hover:bg-[#EFEBE9]'}`}
+                     >
+                       {char}
+                     </button>
+                   ))}
+                 </div>
+               </div>
+
+               {regError && (
+                 <p className="text-red-500 text-xs text-center bg-red-50 py-1.5 rounded-lg font-medium">{regError}</p>
+               )}
+
+               <button 
+                 onClick={handleRegister}
+                 className="w-full py-3 bg-[#5D4037] text-[#FFECB3] hover:bg-[#4E342E] rounded-xl text-sm font-bold shadow-md mt-2 transition-transform active:scale-95"
+               >
+                 Create Profile
+               </button>
             </div>
           </div>
         </div>

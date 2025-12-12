@@ -1,11 +1,11 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { TestRun, TestResult, TestSuite, User, Role, Issue } from '../types';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, 
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid 
 } from 'recharts';
-import { Activity, CheckCircle, XCircle, AlertCircle, Shield, Users, X, TrendingUp, Zap, Clock, ListFilter, AlertTriangle, Target, FileSpreadsheet, Download, Bug } from 'lucide-react';
+import { Activity, CheckCircle, XCircle, AlertCircle, Shield, Users, X, TrendingUp, Zap, Clock, ListFilter, AlertTriangle, Target, FileSpreadsheet, Download, Bug, ChevronDown } from 'lucide-react';
 
 interface DashboardProps {
   activeSuite: TestSuite;
@@ -58,6 +58,10 @@ const Dashboard: React.FC<DashboardProps> = ({ activeSuite, runs, suites, setSui
   // Issue Detail View State
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
 
+  // Trend Chart Time Range State
+  const [timeRange, setTimeRange] = useState<'1H' | '24H' | '7D'>('7D');
+  const [showTimeMenu, setShowTimeMenu] = useState(false);
+
   // --- KPI Calculation for Active Suite ---
   const totalRuns = runs.length;
   
@@ -104,27 +108,63 @@ const Dashboard: React.FC<DashboardProps> = ({ activeSuite, runs, suites, setSui
     { name: 'Skipped', value: totalSkipped, color: COLORS.SKIPPED },
   ].filter(d => d.value > 0);
 
-  // 2. Execution Trend Data (Area Chart)
-  const trendData = runs
-    .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-    .slice(-10)
-    .map(run => {
-      let passed = 0;
-      let failed = 0;
-      let skipped = 0;
-      Object.values(run.results).forEach((r: TestResult) => {
-        if (r.status === 'PASSED') passed++;
-        else if (r.status === 'FAILED') failed++;
-        else skipped++;
-      });
-      return {
-        name: new Date(run.startTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        fullDate: new Date(run.startTime).toLocaleString(),
-        Passed: passed,
-        Failed: failed,
-        Skipped: skipped,
-      };
+  // 2. Execution Trend Data (Area Chart) with Time Range Aggregation
+  const trendData = useMemo(() => {
+    const now = new Date();
+    const cutoff = new Date();
+    
+    // Set Cutoff Time
+    if (timeRange === '1H') cutoff.setHours(now.getHours() - 1);
+    else if (timeRange === '24H') cutoff.setHours(now.getHours() - 24);
+    else cutoff.setDate(now.getDate() - 7); // 7D
+
+    // Filter Runs
+    const filteredRuns = runs.filter(r => new Date(r.startTime) >= cutoff);
+    
+    // Grouping Logic
+    const groupedMap = new Map<string, { time: number, name: string, Passed: number, Failed: number, Skipped: number }>();
+
+    filteredRuns.forEach(run => {
+       const d = new Date(run.startTime);
+       let key = '';
+       let displayName = '';
+       let sortTime = 0;
+
+       if (timeRange === '1H') {
+         // Group by minute or individual run if sparse
+         key = d.toISOString(); // Use exact time for 1H to show granularity
+         displayName = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+         sortTime = d.getTime();
+       } else if (timeRange === '24H') {
+         // Group by Hour
+         d.setMinutes(0, 0, 0);
+         key = d.toISOString();
+         displayName = d.toLocaleTimeString([], { hour: 'numeric' }); // "1 PM"
+         sortTime = d.getTime();
+       } else {
+         // Group by Day (7D)
+         d.setHours(0, 0, 0, 0);
+         key = d.toISOString();
+         displayName = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); // "Oct 24"
+         sortTime = d.getTime();
+       }
+
+       if (!groupedMap.has(key)) {
+         groupedMap.set(key, { time: sortTime, name: displayName, Passed: 0, Failed: 0, Skipped: 0 });
+       }
+
+       const entry = groupedMap.get(key)!;
+       Object.values(run.results).forEach((r: TestResult) => {
+          if (r.status === 'PASSED') entry.Passed++;
+          else if (r.status === 'FAILED') entry.Failed++;
+          else entry.Skipped++;
+       });
     });
+
+    // Convert to Array and Sort
+    return Array.from(groupedMap.values()).sort((a, b) => a.time - b.time);
+
+  }, [runs, timeRange]);
 
   // 3. Priority Breakdown Data (Project Scope)
   const priorityCounts = { High: 0, Medium: 0, Low: 0 };
@@ -336,11 +376,53 @@ const Dashboard: React.FC<DashboardProps> = ({ activeSuite, runs, suites, setSui
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <TrendingUp size={20} className="text-blue-500" /> Execution Trends
             </h2>
-            <div className="flex items-center gap-4 text-xs font-medium">
-               <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500"></span>Passed</div>
-               <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500"></span>Failed</div>
+            
+            <div className="flex items-center gap-3">
+               {/* Time Range Selector */}
+               <div className="relative">
+                 <button 
+                   onClick={() => setShowTimeMenu(!showTimeMenu)}
+                   className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors shadow-sm"
+                 >
+                    {timeRange === '1H' && 'Last 1 Hour'}
+                    {timeRange === '24H' && 'Last 24 Hours'}
+                    {timeRange === '7D' && 'Last 7 Days'}
+                    <ChevronDown size={14} className="text-slate-400" />
+                 </button>
+                 {showTimeMenu && (
+                   <>
+                     <div className="fixed inset-0 z-10" onClick={() => setShowTimeMenu(false)}></div>
+                     <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-slate-100 z-20 overflow-hidden animate-fade-in-up">
+                        <button 
+                          onClick={() => { setTimeRange('1H'); setShowTimeMenu(false); }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-slate-50 ${timeRange === '1H' ? 'text-blue-600 font-bold bg-blue-50' : 'text-slate-600'}`}
+                        >
+                          Last 1 Hour
+                        </button>
+                        <button 
+                          onClick={() => { setTimeRange('24H'); setShowTimeMenu(false); }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-slate-50 ${timeRange === '24H' ? 'text-blue-600 font-bold bg-blue-50' : 'text-slate-600'}`}
+                        >
+                          Last 24 Hours
+                        </button>
+                        <button 
+                          onClick={() => { setTimeRange('7D'); setShowTimeMenu(false); }}
+                          className={`w-full text-left px-4 py-2 text-xs hover:bg-slate-50 ${timeRange === '7D' ? 'text-blue-600 font-bold bg-blue-50' : 'text-slate-600'}`}
+                        >
+                          Last 7 Days
+                        </button>
+                     </div>
+                   </>
+                 )}
+               </div>
+
+               <div className="hidden sm:flex items-center gap-4 text-xs font-medium border-l border-slate-100 pl-4">
+                  <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500"></span>Passed</div>
+                  <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500"></span>Failed</div>
+               </div>
             </div>
           </div>
+          
           <ResponsiveContainer width="100%" height="85%">
             <AreaChart data={trendData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
@@ -354,7 +436,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeSuite, runs, suites, setSui
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} dy={10} />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} dy={10} minTickGap={30} />
               <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11}} />
               <Tooltip content={<CustomTooltip />} />
               <Area type="monotone" dataKey="Passed" stroke={COLORS.PASSED} fillOpacity={1} fill="url(#colorPassed)" strokeWidth={2} />

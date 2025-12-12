@@ -82,6 +82,7 @@ export interface Issue {
 
 export interface Notification {
   id: string;
+  recipientId: string; // New field to identify who this notification is for
   message: string;
   type: 'ASSIGNMENT' | 'SYSTEM';
   read: boolean;
@@ -96,4 +97,4 @@ export interface User {
   jobRole?: string; // New field for job title/role
 }
 
-export type ViewState = 'DASHBOARD' | 'SUITES' | 'RUNNER' | 'HISTORY' | 'ISSUES' | 'NOTIFICATIONS';
+export type ViewState = 'DASHBOARD' | 'SUITES' | 'RUNNER' | 'HISTORY' | 'ISSUES' | 'NOTIFICATIONS' | 'MY_PAGE' | 'MANAGE_ACCOUNTS';
