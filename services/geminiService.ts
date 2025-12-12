@@ -24,16 +24,16 @@ const testCaseSchema: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          title: { type: Type.STRING, description: "A concise title for the test case in Korean" },
-          description: { type: Type.STRING, description: "Brief objective of the test in Korean" },
+          title: { type: Type.STRING, description: "A concise, specific title for the test case in Korean (e.g. '이메일 형식이 잘못되었을 때 로그인 차단 확인')" },
+          description: { type: Type.STRING, description: "Detailed objective and preconditions in Korean" },
           priority: { type: Type.STRING, enum: ["Low", "Medium", "High"] },
           steps: {
             type: Type.ARRAY,
             items: {
               type: Type.OBJECT,
               properties: {
-                action: { type: Type.STRING, description: "The step action to perform in Korean" },
-                expectedResult: { type: Type.STRING, description: "The expected outcome of the step in Korean" }
+                action: { type: Type.STRING, description: "Atomic user action in Korean (e.g. '이메일 필드에 user@domain 입력')" },
+                expectedResult: { type: Type.STRING, description: "Specific system response in Korean (e.g. '붉은색 테두리와 함께 경고 문구 표시')" }
               },
               required: ["action", "expectedResult"]
             }
@@ -68,34 +68,63 @@ const simulationDetailedSchema: Schema = {
   required: ["overallStatus", "executionSteps", "finalAnalysis"]
 };
 
-export const generateTestCases = async (featureDescription: string, contextInfo?: string): Promise<Partial<TestCase>[]> => {
+export const generateTestCases = async (
+  featureDescription: string, 
+  contextInfo?: string,
+  fileData?: { mimeType: string, data: string }
+): Promise<Partial<TestCase>[]> => {
   try {
-    const prompt = `
-      You are an expert QA Automation Engineer fluent in Korean (한국어).
+    const promptText = `
+      You are a Senior QA Automation Engineer & Test Architect.
+      Your goal is to generate highly granular, robust, and edge-case-aware test cases in Korean (한국어).
+
+      **Target Application Context**: ${contextInfo || "General Software Application"}
       
-      Target Application Context: ${contextInfo || "General Software Application"}
-      
-      Task: Generate a comprehensive list of test cases for the following feature/data:
+      **Input Content (Requirement/Screen/Data)**:
       "${featureDescription}"
       
-      Requirements:
-      1. Analyze the input feature or data.
-      2. Generate test cases covering positive, negative, and edge cases.
-      3. CRITICAL: All user-facing text (Titles, Descriptions, Actions, Expected Results) MUST be written in Korean (한국어).
-      4. If the context is a Website, assume standard browser interactions.
-      5. If the context is a Desktop App, assume standard window/OS interactions.
+      **CRITICAL INSTRUCTIONS FOR HIGH QUALITY & GRANULARITY**:
+      1. **Atomic Steps (세분화)**: Never write generic steps like "Login". Break it down:
+         - Bad: "로그인한다."
+         - Good: 
+           1. "아이디 입력란 클릭" -> "커서가 깜빡임"
+           2. "유효하지 않은 이메일(test@@com) 입력" -> "입력됨"
+           3. "비밀번호 입력란에 '1234' 입력" -> "마스킹 처리되어 표시됨"
+           4. "로그인 버튼 클릭" -> "에러 메시지 '이메일 형식을 확인해주세요' 노출"
       
-      Return the response in strictly structured JSON.
+      2. **Scenario Coverage (시나리오 범위)**:
+         - **Positive (Happy Path)**: The ideal success flow.
+         - **Validation (Negative)**: Empty fields, invalid formats, exceeding character limits.
+         - **Edge Cases**: Network disconnection simulation (if applicable), rapid double-clicking, special characters.
+         - **State Changes**: Loading states (spinners), disabled buttons, active states.
+
+      3. **Specific Data**: Use concrete examples in the 'action' field (e.g., instead of "enter name", use "Enter '홍길동'").
+
+      4. **Language**: All Titles, Descriptions, Actions, and Expected Results MUST be in natural, professional **Korean (한국어)**.
+
+      Generate a comprehensive list of test cases based on the provided input.
     `;
+
+    // Construct request parts
+    const parts: any[] = [{ text: promptText }];
+    
+    if (fileData) {
+      parts.push({
+        inlineData: {
+          mimeType: fileData.mimeType,
+          data: fileData.data
+        }
+      });
+    }
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
+      contents: parts.length > 1 ? parts : promptText,
       config: {
         responseMimeType: "application/json",
         responseSchema: testCaseSchema,
-        systemInstruction: "You are a helpful QA assistant that generates high-quality software test cases in Korean.",
-        thinkingConfig: { thinkingBudget: 2048 } // Use reasoning to generate better edge cases
+        systemInstruction: "You are a perfectionist QA Lead. You hate vague test cases. You define every single user interaction explicitly.",
+        thinkingConfig: { thinkingBudget: 4096 } // Increased budget for deeper scenario analysis
       }
     });
 

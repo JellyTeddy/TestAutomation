@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { TestSuite, TestCase, User, Role } from '../types';
-import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle } from 'lucide-react';
+import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle, Download, PlusCircle, MinusCircle, Save } from 'lucide-react';
 import { generateTestCases } from '../services/geminiService';
 // @ts-ignore
 import readXlsxFile from 'read-excel-file';
@@ -26,10 +26,22 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
   const [prompt, setPrompt] = useState('');
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [importMode, setImportMode] = useState(false);
+  // Store uploaded file data for AI processing (for PDF/PPTX)
+  const [importFileData, setImportFileData] = useState<{mimeType: string, data: string} | undefined>(undefined);
+
   const [appType, setAppType] = useState<AppContextType>('WEB');
   const [appContextValue, setAppContextValue] = useState('');
   const [testEmail, setTestEmail] = useState('');
   
+  // Manual Create Case Inputs
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCaseTitle, setNewCaseTitle] = useState('');
+  const [newCaseDesc, setNewCaseDesc] = useState('');
+  const [newCasePriority, setNewCasePriority] = useState<'Low'|'Medium'|'High'>('Medium');
+  const [newCaseSteps, setNewCaseSteps] = useState<{id: string, action: string, expectedResult: string}[]>([
+    { id: 'temp-1', action: '', expectedResult: '' }
+  ]);
+
   // Run Configuration Inputs
   const [showRunModal, setShowRunModal] = useState(false);
   const [runAppType, setRunAppType] = useState<AppContextType>('WEB');
@@ -74,7 +86,11 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
       let contextInfo = "";
 
       if (importMode) {
-        finalPrompt = `I have test suite data (from an Excel file or text) with the following content. Please parse this and convert it into structured test cases in KOREAN: \n\n${prompt}`;
+        if (importFileData) {
+           finalPrompt = `I have attached a document file (${prompt}). Please parse this document and generate test cases from it in KOREAN.`;
+        } else {
+           finalPrompt = `I have test suite data (from an Excel file or text) with the following content. Please parse this and convert it into structured test cases in KOREAN: \n\n${prompt}`;
+        }
         contextInfo = "Imported Data Conversion";
       } else {
         const locationLabel = appType === 'WEB' ? 'URL' : 'File Path/Address';
@@ -83,7 +99,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
         if (testEmail) contextInfo += ` [Test Account: ${testEmail}]`;
       }
 
-      const newCases = await generateTestCases(finalPrompt, contextInfo);
+      const newCases = await generateTestCases(finalPrompt, contextInfo, importFileData);
       
       if (genOpRef.current !== opId) return;
       
@@ -143,6 +159,94 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     }
   };
 
+  const handleExportTestCases = () => {
+    if (activeSuite.cases.length === 0) {
+      alert("No test cases to export.");
+      return;
+    }
+
+    // Prepare CSV data
+    const headers = ['Case ID', 'Title', 'Description', 'Priority', 'Step #', 'Action', 'Expected Result'];
+    let rows: string[] = [];
+
+    activeSuite.cases.forEach(c => {
+      c.steps.forEach((step, index) => {
+        const row = [
+          `"${c.id}"`,
+          `"${c.title.replace(/"/g, '""')}"`,
+          `"${(c.description || '').replace(/"/g, '""')}"`,
+          c.priority,
+          index + 1,
+          `"${step.action.replace(/"/g, '""')}"`,
+          `"${step.expectedResult.replace(/"/g, '""')}"`
+        ];
+        rows.push(row.join(','));
+      });
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    // Add BOM for UTF-8 support (Korean characters)
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${activeSuite.name.replace(/\s+/g, '_')}_TestCases.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- MANUAL CASE CREATION ---
+  const handleAddStep = () => {
+    setNewCaseSteps([...newCaseSteps, { id: crypto.randomUUID(), action: '', expectedResult: '' }]);
+  };
+
+  const handleRemoveStep = (id: string) => {
+    if (newCaseSteps.length > 1) {
+      setNewCaseSteps(newCaseSteps.filter(s => s.id !== id));
+    }
+  };
+
+  const handleStepChange = (id: string, field: 'action' | 'expectedResult', value: string) => {
+    setNewCaseSteps(newCaseSteps.map(s => s.id === id ? { ...s, [field]: value } : s));
+  };
+
+  const handleCreateManualCase = () => {
+    if (!newCaseTitle.trim()) {
+      alert("Please enter a title.");
+      return;
+    }
+
+    const newCase: TestCase = {
+      id: crypto.randomUUID(),
+      title: newCaseTitle,
+      description: newCaseDesc,
+      priority: newCasePriority,
+      steps: newCaseSteps.map(s => ({
+        id: crypto.randomUUID(),
+        action: s.action || 'Action',
+        expectedResult: s.expectedResult || 'Expected Result'
+      }))
+    };
+
+    setSuites(prevSuites => prevSuites.map(s => {
+      if (s.id === activeSuite.id) {
+        return {
+          ...s,
+          cases: [...s.cases, newCase]
+        };
+      }
+      return s;
+    }));
+
+    // Reset and close
+    setNewCaseTitle('');
+    setNewCaseDesc('');
+    setNewCasePriority('Medium');
+    setNewCaseSteps([{ id: crypto.randomUUID(), action: '', expectedResult: '' }]);
+    setShowCreateModal(false);
+  };
+
   // --- RUN CONFIGURATION LOGIC ---
   const initiateRun = () => {
     if (!canRun || !activeSuite) return;
@@ -192,6 +296,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     setImportMode(false);
     setAvailableSheets([]);
     setCurrentFile(null);
+    setImportFileData(undefined);
     setAppContextValue('');
     setTestEmail('');
     setAppType('WEB');
@@ -222,6 +327,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     setCurrentFile(file);
     setAvailableSheets([]);
     setPrompt('');
+    setImportFileData(undefined);
 
     try {
       if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
@@ -239,16 +345,30 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
             row.map(cell => cell === null ? '' : String(cell)).join('\t')
           ).join('\n');
           setPrompt(`[IMPORTED FILE: ${file.name}]\n${content}`);
+          setIsLoadingFile(false);
         }
+      } else if (file.name.endsWith('.pdf') || file.name.endsWith('.pptx')) {
+         const reader = new FileReader();
+         reader.onload = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            setImportFileData({
+               mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation'),
+               data: base64
+            });
+            setPrompt(`[IMPORTED FILE: ${file.name}]\n(File content will be processed by AI)`);
+            setIsLoadingFile(false);
+         };
+         reader.readAsDataURL(file);
       } else {
         const content = await file.text();
         setPrompt(`[IMPORTED FILE CONTENT: ${file.name}]\n${content}`);
+        setIsLoadingFile(false);
       }
     } catch (error) {
       console.error("File read error:", error);
-      alert("Failed to read file. Please ensure it is a valid Excel or Text file.");
-    } finally {
+      alert("Failed to read file. Please ensure it is a valid Excel, PDF, PPTX or Text file.");
       setIsLoadingFile(false);
+    } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -259,6 +379,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     setImportMode(false);
     setAvailableSheets([]);
     setCurrentFile(null);
+    setImportFileData(undefined);
     
     // Pre-fill from existing config if available to streamline the process
     if (activeSuite.targetConfig) {
@@ -307,7 +428,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                   </div>
                </div>
                
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
                  {/* Observer Controls */}
                  {!canWrite && (
                     <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
@@ -319,6 +440,20 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                  {/* Write Controls */}
                  {canWrite && (
                    <>
+                    <button 
+                      onClick={() => setShowCreateModal(true)}
+                      className="flex items-center space-x-2 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-colors text-sm font-medium shadow-sm"
+                    >
+                      <Plus size={16} />
+                      <span className="hidden lg:inline">New Case</span>
+                    </button>
+                    <button 
+                      onClick={handleExportTestCases}
+                      className="flex items-center space-x-2 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-colors text-sm font-medium shadow-sm"
+                    >
+                      <Download size={16} />
+                      <span className="hidden lg:inline">Export</span>
+                    </button>
                      <button 
                       onClick={openImportModal}
                       className="flex items-center space-x-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
@@ -355,7 +490,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                   <div className="text-center py-20 text-slate-400">
                     <FileText size={48} className="mx-auto mb-4 opacity-20" />
                     <p>No test cases yet.</p>
-                    {canWrite && <p className="text-sm mt-2">Click "AI Generate" or "Import Data" to automagically create some.</p>}
+                    {canWrite && <p className="text-sm mt-2">Click "New Case", "AI Generate" or "Import Data" to create some.</p>}
                   </div>
                 ) : (
                   activeSuite.cases.map((testCase, index) => (
@@ -373,6 +508,114 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
           </>
       </div>
 
+      {/* Manual Create Case Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 m-4 flex flex-col max-h-[90vh] animate-fade-in-up">
+              <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
+                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                   <PlusCircle className="text-blue-600" /> New Test Case
+                 </h3>
+                 <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600">
+                   <X size={20} />
+                 </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+                 <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2">
+                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Title</label>
+                       <input 
+                         className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                         placeholder="e.g. Verify Login Success"
+                         value={newCaseTitle}
+                         onChange={(e) => setNewCaseTitle(e.target.value)}
+                         autoFocus
+                       />
+                    </div>
+                    <div>
+                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Priority</label>
+                       <select 
+                         className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                         value={newCasePriority}
+                         onChange={(e) => setNewCasePriority(e.target.value as any)}
+                       >
+                         <option value="Low">Low</option>
+                         <option value="Medium">Medium</option>
+                         <option value="High">High</option>
+                       </select>
+                    </div>
+                 </div>
+
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Description</label>
+                    <textarea 
+                       className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-20"
+                       placeholder="What is the objective of this test?"
+                       value={newCaseDesc}
+                       onChange={(e) => setNewCaseDesc(e.target.value)}
+                    />
+                 </div>
+
+                 <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Test Steps</label>
+                      <button 
+                        onClick={handleAddStep}
+                        className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        <PlusCircle size={14} /> Add Step
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                       {newCaseSteps.map((step, index) => (
+                          <div key={step.id} className="flex gap-2 items-start bg-slate-50 p-3 rounded-lg border border-slate-200">
+                             <span className="text-xs font-bold text-slate-400 mt-2.5 w-6">{index + 1}.</span>
+                             <div className="flex-1 space-y-2">
+                                <input 
+                                  className="w-full border border-slate-300 rounded-md p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                                  placeholder="Action (e.g. Click Login)"
+                                  value={step.action}
+                                  onChange={(e) => handleStepChange(step.id, 'action', e.target.value)}
+                                />
+                                <input 
+                                  className="w-full border border-slate-300 rounded-md p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
+                                  placeholder="Expected Result (e.g. Dashboard loads)"
+                                  value={step.expectedResult}
+                                  onChange={(e) => handleStepChange(step.id, 'expectedResult', e.target.value)}
+                                />
+                             </div>
+                             <button 
+                               onClick={() => handleRemoveStep(step.id)}
+                               disabled={newCaseSteps.length === 1}
+                               className="text-slate-400 hover:text-red-500 mt-2 disabled:opacity-30"
+                             >
+                               <MinusCircle size={18} />
+                             </button>
+                          </div>
+                       ))}
+                    </div>
+                 </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end gap-3">
+                 <button 
+                   onClick={() => setShowCreateModal(false)}
+                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
+                 >
+                   Cancel
+                 </button>
+                 <button 
+                   onClick={handleCreateManualCase}
+                   className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold shadow-sm"
+                 >
+                   Create Case
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
       {/* AI Prompt/Import Modal */}
       {showPromptModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
@@ -380,12 +623,12 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
             <div className="p-0 mb-4">
                <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
                  {importMode ? <FileSpreadsheet className="text-amber-500" /> : <Wand2 className="text-indigo-500" />}
-                 {importMode ? 'Import Test Data (Excel)' : 'AI Generate Test Cases'}
+                 {importMode ? 'Import Test Data' : 'AI Generate Test Cases'}
                </h3>
                
                <p className="text-slate-500 text-sm">
                  {importMode 
-                   ? 'Upload your Excel data. The AI will convert it into a Korean test suite.' 
+                   ? 'Upload Excel/PDF/PPTX data. The AI will convert it into a Korean test suite.' 
                    : 'Define your application boundary and feature. The AI will generate test cases in Korean.'}
                </p>
             </div>
@@ -436,7 +679,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                        </label>
                        <div className="relative">
                           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Mail size={14} className="text-slate-400"/>
+                            <Mail size={16} className="text-slate-400"/>
                           </div>
                           <input 
                               type="text"
@@ -456,7 +699,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                   <div>
                     <input
                       type="file"
-                      accept=".xlsx, .xls, .csv, .txt"
+                      accept=".xlsx, .xls, .csv, .txt, .pdf, .pptx"
                       ref={fileInputRef}
                       onChange={handleFileUpload}
                       className="hidden"
@@ -471,7 +714,7 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                       ) : (
                         <>
                           <Upload size={24} />
-                          <span className="font-medium">Click to Upload Excel File</span>
+                          <span className="font-medium">Click to Upload File (Excel, PDF, PPTX)</span>
                         </>
                       )}
                     </button>
