@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { TestSuite, TestCase, User, Role } from '../types';
-import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle, Download, PlusCircle, MinusCircle, Save } from 'lucide-react';
+import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle, Download, PlusCircle, MinusCircle, Save, Key } from 'lucide-react';
 import { generateTestCases } from '../services/geminiService';
 // @ts-ignore
 import readXlsxFile from 'read-excel-file';
@@ -46,7 +46,8 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
   const [showRunModal, setShowRunModal] = useState(false);
   const [runAppType, setRunAppType] = useState<AppContextType>('WEB');
   const [runAddress, setRunAddress] = useState('');
-  const [runEmail, setRunEmail] = useState('');
+  const [runValidId, setRunValidId] = useState('');
+  const [runValidPassword, setRunValidPassword] = useState('');
   const [runMode, setRunMode] = useState<ExecutionMode>('MANUAL');
   const [runAssets, setRunAssets] = useState<string[]>([]); // New: Virtual Assets
 
@@ -253,7 +254,8 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
     const config = activeSuite.targetConfig;
     setRunAppType(config?.appType || 'WEB');
     setRunAddress(config?.appAddress || '');
-    setRunEmail(config?.testEmail || '');
+    setRunValidId(config?.validId || '');
+    setRunValidPassword(config?.validPassword || '');
     setRunMode(config?.executionMode || 'MANUAL');
     setRunAssets(config?.mockAssets || []);
     setShowRunModal(true);
@@ -280,7 +282,8 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
       targetConfig: {
         appType: runAppType,
         appAddress: runAddress,
-        testEmail: runEmail,
+        validId: runValidId,
+        validPassword: runValidPassword,
         executionMode: runMode,
         mockAssets: runAssets
       }
@@ -877,22 +880,33 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                  Test Email / Account (Optional)
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Mail size={16} className="text-slate-400"/>
-                  </div>
-                  <input 
-                      type="text"
-                      className="w-full border border-slate-300 rounded-lg pl-10 p-2.5 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
-                      placeholder="user@example.com"
-                      value={runEmail}
-                      onChange={(e) => setRunEmail(e.target.value)}
-                  />
-                </div>
+              {/* Explicit Login Credentials Section */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block flex items-center gap-2">
+                   <Key size={14} /> Login Credentials (Optional)
+                 </label>
+                 <p className="text-[10px] text-slate-400">If provided, the auto-runner will use these. If required but missing, the test may be skipped.</p>
+                 
+                 <div className="grid grid-cols-1 gap-3">
+                   <div>
+                      <input 
+                          type="text"
+                          className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          placeholder="Valid ID / Email"
+                          value={runValidId}
+                          onChange={(e) => setRunValidId(e.target.value)}
+                      />
+                   </div>
+                   <div>
+                      <input 
+                          type="password"
+                          className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-500 outline-none"
+                          placeholder="Valid Password"
+                          value={runValidPassword}
+                          onChange={(e) => setRunValidPassword(e.target.value)}
+                      />
+                   </div>
+                 </div>
               </div>
 
               {/* Mock Assets Section */}

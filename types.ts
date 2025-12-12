@@ -1,4 +1,5 @@
 
+
 export type TestStatus = 'IDLE' | 'PASSED' | 'FAILED' | 'SKIPPED';
 
 export interface TestStep {
@@ -29,7 +30,9 @@ export interface TestSuite {
   targetConfig?: {
     appType: 'WEB' | 'DESKTOP';
     appAddress: string;
-    testEmail?: string;
+    testEmail?: string; // Legacy field, kept for backward compatibility
+    validId?: string; // New: Explicit Login ID
+    validPassword?: string; // New: Explicit Login Password
     executionMode?: 'MANUAL' | 'AUTOMATED';
     mockAssets?: string[]; // List of file names available in the virtual file system
   };

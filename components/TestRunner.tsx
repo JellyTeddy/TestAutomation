@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { TestSuite, TestRun, TestResult, TestStatus, TestCase } from '../types';
 import { CheckCircle, XCircle, SkipForward, ArrowRight, ArrowLeft, Save, AlertOctagon, Monitor, Globe, Mail, Bot, Loader2, PlayCircle, PauseCircle, FileSpreadsheet, FolderOpen } from 'lucide-react';
@@ -60,7 +61,25 @@ const TestRunner: React.FC<TestRunnerProps> = ({ suite, onComplete, onCancel }) 
 
     const runSimulation = async () => {
       try {
-        let contextInfo = `${suite.targetConfig?.appType || 'App'} at ${suite.targetConfig?.appAddress || 'Loc'} using ${suite.targetConfig?.testEmail || 'default user'}`;
+        let contextInfo = `${suite.targetConfig?.appType || 'App'} at ${suite.targetConfig?.appAddress || 'Loc'}`;
+        
+        // Add specific user credential context if available
+        if (suite.targetConfig?.testEmail) {
+             contextInfo += `\n[Context] User Account: ${suite.targetConfig.testEmail}`;
+        }
+        
+        // Inject Credentials specifically for the AI logic to detect skipping
+        if (suite.targetConfig?.validId) {
+             contextInfo += `\n[Credentials] Valid ID: ${suite.targetConfig.validId}`;
+        } else {
+             contextInfo += `\n[Credentials] Valid ID: (Not Provided)`;
+        }
+
+        if (suite.targetConfig?.validPassword) {
+             contextInfo += `\n[Credentials] Valid Password: ${suite.targetConfig.validPassword}`;
+        } else {
+             contextInfo += `\n[Credentials] Valid Password: (Not Provided)`;
+        }
         
         // Inject Virtual File System Context
         if (suite.targetConfig?.mockAssets && suite.targetConfig.mockAssets.length > 0) {

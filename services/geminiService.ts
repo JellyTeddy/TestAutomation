@@ -169,16 +169,26 @@ export const simulateTestExecution = async (testCase: TestCase, contextInfo: str
       ${stepsText}
       
       Instructions:
-      1. Act as if you are executing these steps on the real application. Use the 'Thinking' process to simulate the state of the application at each step.
-      2. For each step:
+      1. **Check Credentials (CRITICAL)**:
+         - Review the Context provided above.
+         - If the Test Case steps require logging in (e.g. "Enter ID", "Sign in") AND the Context says "Valid ID: (Not Provided)" or "Valid Password: (Not Provided)", you MUST immediately stop.
+         - In this case, set 'overallStatus' to 'SKIPPED' and 'finalAnalysis' to "Skipped test because valid login credentials were not provided in the setup."
+      
+      2. **Simulation**:
+         - If credentials are present (or not needed), act as if you are executing these steps on the real application.
+         - Use the 'Thinking' process to simulate the state of the application at each step.
+      
+      3. **For each step**:
          - Simulate the action.
          - Verify if the expected result is met.
          - Generate a realistic execution log (in Korean).
          - Assign a duration (ms).
-      3. Failure Logic:
+         
+      4. **Failure Logic**:
          - Introduce realistic failures (e.g., Network Timeout, Element Not Visible, 500 Internal Server Error) with a ~15% probability for 'Medium'/'High' priority cases, or if the test case logic is inherently flawed.
-         - If a step fails, stop execution of subsequent steps (mark them as skipped implicitly by not including them or noting them).
-      4. Determine the Overall Status (PASSED, FAILED).
+         - If a step fails, stop execution of subsequent steps.
+      
+      5. Determine the Overall Status (PASSED, FAILED, SKIPPED).
       
       Return strictly JSON based on the schema.
     `;
