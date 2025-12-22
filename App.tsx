@@ -8,6 +8,7 @@ import IssueBoard from './components/IssueBoard';
 import MyPage from './components/MyPage';
 import ManageAccounts from './components/ManageAccounts';
 import ManageProjects from './components/ManageProjects';
+import AccountSelector from './components/AccountSelector';
 import { ViewState, TestSuite, TestRun, Issue, Notification, User, Role } from './types';
 import { Bell, X, Check, FolderPlus, Layers, Trash2, Settings, Clock, Hash } from 'lucide-react';
 
@@ -74,7 +75,8 @@ const App: React.FC = () => {
   const [newProjectPrefix, setNewProjectPrefix] = useState('');
 
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
-  const [currentUser, setCurrentUser] = useState<User>(MOCK_USERS[1]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [sessionActive, setSessionActive] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
 
@@ -89,68 +91,50 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
-  useEffect(() => {
-    const savedSuites = localStorage.getItem('autotest_suites');
-    const savedRuns = localStorage.getItem('autotest_runs');
-    const savedIssues = localStorage.getItem('autotest_issues');
-    const savedUsers = localStorage.getItem('autotest_users');
-    const savedNotifs = localStorage.getItem('autotest_notifs');
+  // Define core utility functions first to avoid TDZ errors
+  const handleAddNotification = (message: string, recipientId: string) => {
+    const newNotif: Notification = {
+      id: crypto.randomUUID(),
+      recipientId: recipientId,
+      message,
+      type: 'ASSIGNMENT',
+      read: false,
+      timestamp: new Date().toISOString()
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+  };
+
+  const handleLogout = () => {
+    setSessionActive(false);
+    setCurrentUser(null);
+    localStorage.removeItem('autotest_last_user');
+  };
+
+  const handleSelectUser = (user: User) => {
+    if (!user) {
+      handleLogout();
+      return;
+    }
     
-    if (savedSuites) {
-      const parsedSuites = JSON.parse(savedSuites);
-      setSuites(parsedSuites);
-      if (parsedSuites.length > 0 && !activeSuiteId) {
-        setActiveSuiteId(parsedSuites[0].id);
-      }
-    } else {
-      if (MOCK_SUITES.length > 0) setActiveSuiteId(MOCK_SUITES[0].id);
+    // BUG FIX: Only block/logout if we're trying to switch TO admin FROM a different *active* user
+    // If sessionActive is false, this is an initial login and should be allowed.
+    if (sessionActive && currentUser && user.email === 'administrator@autotest.ai' && currentUser.email !== 'administrator@autotest.ai') {
+       handleLogout(); 
+       return;
     }
 
-    if (savedRuns) setRuns(JSON.parse(savedRuns));
-    if (savedIssues) setIssues(JSON.parse(savedIssues));
-    if (savedUsers) {
-      const parsedUsers = JSON.parse(savedUsers);
-      setUsers(parsedUsers);
-      if (!parsedUsers.find((u: User) => u.email === 'administrator@autotest.ai')) {
-        setUsers([MOCK_USERS[0], ...parsedUsers]);
-      } else {
-        const found = parsedUsers.find((u: User) => u.id === currentUser.id);
-        if (found) setCurrentUser(found);
-      }
-    }
-    if (savedNotifs) setNotifications(JSON.parse(savedNotifs));
-  }, []);
+    setCurrentUser(user);
+    setSessionActive(true);
+    localStorage.setItem('autotest_last_user', user.id);
+  };
 
-  useEffect(() => {
-    localStorage.setItem('autotest_suites', JSON.stringify(suites));
-  }, [suites]);
-
-  useEffect(() => {
-    localStorage.setItem('autotest_runs', JSON.stringify(runs));
-  }, [runs]);
-
-  useEffect(() => {
-    localStorage.setItem('autotest_issues', JSON.stringify(issues));
-  }, [issues]);
-
-  useEffect(() => {
-    localStorage.setItem('autotest_users', JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem('autotest_notifs', JSON.stringify(notifications));
-  }, [notifications]);
-
-  const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
-  const visibleSuites = suites.filter(s => {
-    if (isGlobalAdmin) return true;
-    return s.permissions && s.permissions[currentUser.id];
-  });
-  const activeSuite = visibleSuites.find(s => s.id === activeSuiteId) || visibleSuites[0] || null;
-  const filteredRuns = runs.filter(r => r.suiteId === activeSuite?.id);
-  const filteredIssues = issues.filter(i => i.suiteId === activeSuite?.id);
-  const myNotifications = notifications.filter(n => n.recipientId === currentUser.id);
-  const unreadCount = myNotifications.filter(n => !n.read).length;
+  const handleRegisterUser = (name: string, email: string, avatar: string, jobRole: string) => {
+    const newUser: User = { id: crypto.randomUUID(), name, email, avatar, jobRole };
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    handleSelectUser(newUser); 
+    handleAddNotification(`새 계정이 생성되었습니다: ${name}.`, newUser.id);
+  };
 
   const handleRunSuite = (suite: TestSuite) => {
     setActiveSuiteId(suite.id);
@@ -182,31 +166,12 @@ const App: React.FC = () => {
     setView('SUITES');
   };
 
-  const handleAddNotification = (message: string, recipientId: string) => {
-    const newNotif: Notification = {
-      id: crypto.randomUUID(),
-      recipientId: recipientId,
-      message,
-      type: 'ASSIGNMENT',
-      read: false,
-      timestamp: new Date().toISOString()
-    };
-    setNotifications(prev => [newNotif, ...prev]);
-  };
-
   const markRead = (id: string) => {
     setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
   const clearAll = () => {
     setNotifications(notifications.filter(n => n.recipientId !== currentUser.id));
-  };
-  
-  const handleRegisterUser = (name: string, email: string, avatar: string, jobRole: string) => {
-    const newUser: User = { id: crypto.randomUUID(), name, email, avatar, jobRole };
-    setUsers([...users, newUser]);
-    setCurrentUser(newUser);
-    handleAddNotification(`Welcome ${name}! Account created.`, newUser.id);
   };
 
   const handleCreateProject = () => {
@@ -215,7 +180,7 @@ const App: React.FC = () => {
     const newSuite: TestSuite = {
       id: crypto.randomUUID(),
       name: newProjectName,
-      description: newProjectDesc || 'No description provided.',
+      description: newProjectDesc || '설명이 없습니다.',
       createdAt: new Date().toISOString(),
       issuePrefix: prefix,
       nextIssueNumber: 1,
@@ -251,32 +216,107 @@ const App: React.FC = () => {
     setUsers(prev => prev.filter(u => u.id !== userId));
   };
 
+  useEffect(() => {
+    const savedSuites = localStorage.getItem('autotest_suites');
+    const savedRuns = localStorage.getItem('autotest_runs');
+    const savedIssues = localStorage.getItem('autotest_issues');
+    const savedUsers = localStorage.getItem('autotest_users');
+    const savedNotifs = localStorage.getItem('autotest_notifs');
+    const lastUserId = localStorage.getItem('autotest_last_user');
+    
+    if (savedSuites) {
+      const parsedSuites = JSON.parse(savedSuites);
+      setSuites(parsedSuites);
+      if (parsedSuites.length > 0 && !activeSuiteId) {
+        setActiveSuiteId(parsedSuites[0].id);
+      }
+    } else {
+      if (MOCK_SUITES.length > 0) setActiveSuiteId(MOCK_SUITES[0].id);
+    }
+
+    if (savedRuns) setRuns(JSON.parse(savedRuns));
+    if (savedIssues) setIssues(JSON.parse(savedIssues));
+    if (savedUsers) {
+      const parsedUsers = JSON.parse(savedUsers);
+      setUsers(parsedUsers);
+      if (!parsedUsers.find((u: User) => u.email === 'administrator@autotest.ai')) {
+        setUsers([MOCK_USERS[0], ...parsedUsers]);
+      }
+    }
+    if (savedNotifs) setNotifications(JSON.parse(savedNotifs));
+
+    // Restore session if available
+    if (lastUserId) {
+       const userList = savedUsers ? JSON.parse(savedUsers) : MOCK_USERS;
+       const user = userList.find((u: User) => u.id === lastUserId);
+       if (user) {
+         // Direct assignment to state to bypass handleSelectUser guard logic for restoration
+         setCurrentUser(user); 
+         setSessionActive(true);
+       }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_suites', JSON.stringify(suites));
+  }, [suites]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_runs', JSON.stringify(runs));
+  }, [runs]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_issues', JSON.stringify(issues));
+  }, [issues]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_users', JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    localStorage.setItem('autotest_notifs', JSON.stringify(notifications));
+  }, [notifications]);
+
+  // Conditional early return for the login screen
+  if (!sessionActive || !currentUser) {
+    return <AccountSelector users={users} onSelect={handleSelectUser} onRegister={handleRegisterUser} darkMode={darkMode} />;
+  }
+
+  const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
+  const visibleSuites = suites.filter(s => {
+    if (isGlobalAdmin) return true;
+    return s.permissions && s.permissions[currentUser.id];
+  });
+  const activeSuite = visibleSuites.find(s => s.id === activeSuiteId) || visibleSuites[0] || null;
+  const filteredRuns = runs.filter(r => r.suiteId === activeSuite?.id);
+  const filteredIssues = issues.filter(i => i.suiteId === activeSuite?.id);
+  const myNotifications = notifications.filter(n => n.recipientId === currentUser.id);
+  const unreadCount = myNotifications.filter(n => !n.read).length;
+
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-300 overflow-hidden font-sans text-slate-900 dark:text-slate-100">
-      {view !== 'RUNNER' && (
-        <Sidebar 
-          currentView={view} 
-          onNavigate={setView} 
-          currentUser={currentUser}
-          users={users}
-          onSwitchUser={setCurrentUser}
-          onRegisterUser={handleRegisterUser}
-          suites={visibleSuites}
-          activeSuiteId={activeSuiteId}
-          onSelectSuite={setActiveSuiteId}
-          onCreateProject={() => setShowCreateProjectModal(true)}
-          isGlobalAdmin={isGlobalAdmin}
-          darkMode={darkMode}
-          toggleDarkMode={() => setDarkMode(!darkMode)}
-        />
-      )}
+      <Sidebar 
+        currentView={view} 
+        onNavigate={setView} 
+        currentUser={currentUser}
+        users={users}
+        onSelectUser={handleSelectUser}
+        onRegisterUser={handleRegisterUser}
+        suites={visibleSuites}
+        activeSuiteId={activeSuiteId}
+        onSelectSuite={setActiveSuiteId}
+        onCreateProject={() => setShowCreateProjectModal(true)}
+        isGlobalAdmin={isGlobalAdmin}
+        darkMode={darkMode}
+        toggleDarkMode={() => setDarkMode(!darkMode)}
+      />
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
         {view !== 'RUNNER' && view !== 'NOTIFICATIONS' && (
           <div className="absolute top-6 right-8 z-30">
             <button 
               onClick={() => setShowNotifPanel(!showNotifPanel)}
-              className="relative p-2 bg-white dark:bg-slate-900 rounded-full shadow-sm border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              className="relative p-2 bg-white dark:bg-slate-900 rounded-full shadow-sm border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-lg hover:scale-105 active:scale-95"
             >
               <Bell size={20} />
               {unreadCount > 0 && (
@@ -287,11 +327,11 @@ const App: React.FC = () => {
             </button>
 
             {showNotifPanel && (
-              <div className="absolute right-0 mt-3 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-100 dark:border-slate-800 animate-fade-in-up origin-top-right overflow-hidden">
+              <div className="absolute right-0 mt-3 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-100 dark:border-slate-800 animate-fade-in-up origin-top-right overflow-hidden z-50">
                 <div className="p-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
                   <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Notifications</h3>
                   {myNotifications.length > 0 && (
-                     <button onClick={clearAll} className="text-xs text-slate-400">Clear all</button>
+                     <button onClick={clearAll} className="text-xs text-slate-400 hover:text-slate-600">Clear all</button>
                   )}
                 </div>
                 <div className="max-h-[300px] overflow-y-auto">
@@ -305,7 +345,7 @@ const App: React.FC = () => {
                            <p className="text-xs text-slate-400 mt-1">{new Date(notif.timestamp).toLocaleTimeString()}</p>
                          </div>
                          {!notif.read && (
-                           <button onClick={() => markRead(notif.id)} className="text-blue-500 self-center"><Check size={14} /></button>
+                           <button onClick={() => markRead(notif.id)} className="text-blue-500 self-center hover:scale-110 transition-transform"><Check size={14} /></button>
                          )}
                       </div>
                     ))

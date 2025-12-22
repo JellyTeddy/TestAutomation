@@ -36,13 +36,13 @@ export interface TestSuite {
   issuePrefix?: string; // Custom prefix for issues (e.g. "AUTH")
   nextIssueNumber?: number; // Counter for the next issue (e.g. 1)
   targetConfig?: {
-    appType: 'WEB' | 'DESKTOP';
+    appType: 'WEB' | 'FILE' | 'DESKTOP';
     appAddress: string;
-    testEmail?: string; // Legacy field, kept for backward compatibility
-    validId?: string; // New: Explicit Login ID
-    validPassword?: string; // New: Explicit Login Password
+    fileName?: string;
+    fileData?: string; // Base64
+    validId?: string; 
+    validPassword?: string; 
     executionMode?: 'MANUAL' | 'AUTOMATED';
-    mockAssets?: string[]; // List of file names available in the virtual file system
   };
 }
 
@@ -99,12 +99,12 @@ export interface Issue {
   createdAt: string;
   dueDate?: string; // ISO Date string (YYYY-MM-DD)
   comments?: Comment[];
-  attachments?: Attachment[]; // New field for planning documents/files
+  attachments?: Attachment[]; 
 }
 
 export interface Notification {
   id: string;
-  recipientId: string; // New field to identify who this notification is for
+  recipientId: string; 
   message: string;
   type: 'ASSIGNMENT' | 'SYSTEM';
   read: boolean;
@@ -115,8 +115,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  avatar: string; // Emoji or URL
-  jobRole?: string; // New field for job title/role
+  avatar: string; 
+  jobRole?: string; 
 }
 
 export type ViewState = 'DASHBOARD' | 'SUITES' | 'RUNNER' | 'HISTORY' | 'ISSUES' | 'NOTIFICATIONS' | 'MY_PAGE' | 'MANAGE_ACCOUNTS' | 'MANAGE_PROJECTS';
