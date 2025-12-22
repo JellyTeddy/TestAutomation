@@ -1,5 +1,4 @@
 
-
 export type TestStatus = 'IDLE' | 'PASSED' | 'FAILED' | 'SKIPPED';
 
 export interface TestStep {
@@ -18,12 +17,21 @@ export interface TestCase {
 
 export type Role = 'ADMIN' | 'MEMBER' | 'OBSERVER';
 
+export interface Sprint {
+  id: string;
+  name: string;
+  startDate: string; // ISO String
+  endDate: string;   // ISO String
+}
+
 export interface TestSuite {
   id: string;
   name: string;
   description: string;
   createdAt: string;
   cases: TestCase[];
+  sprints?: Sprint[]; // List of sprints for this project
+  activeSprintId?: string; // Currently focused sprint on dashboard
   permissions?: Record<string, Role>; // Map userId to Role
   issuePrefix?: string; // Custom prefix for issues (e.g. "AUTH")
   nextIssueNumber?: number; // Counter for the next issue (e.g. 1)
@@ -79,6 +87,7 @@ export interface Attachment {
 export interface Issue {
   id: string;
   suiteId: string; // Link issue to a specific project
+  sprintId?: string; // Link issue to a specific sprint
   key: string; // e.g. ISS-1
   title: string;
   description: string;

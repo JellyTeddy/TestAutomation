@@ -1,10 +1,8 @@
 
 import React, { useState, useRef } from 'react';
 import { TestSuite, TestCase, User, Role } from '../types';
-import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle, Download, PlusCircle, MinusCircle, Save, Key } from 'lucide-react';
+import { Plus, Trash2, Wand2, ChevronRight, FileText, Play, ChevronDown, ChevronUp, FileSpreadsheet, Upload, Link as LinkIcon, Layers, Monitor, Globe, Mail, HardDrive, Settings, X, Bot, Hand, Users, Shield, Lock, Eye, FolderOpen, File as FileIcon, XCircle, Download, PlusCircle, MinusCircle, Save, Key, CalendarDays, History, AlertCircle } from 'lucide-react';
 import { generateTestCases } from '../services/geminiService';
-// @ts-ignore
-import readXlsxFile from 'read-excel-file';
 
 interface SuiteManagerProps {
   activeSuite: TestSuite;
@@ -15,960 +13,108 @@ interface SuiteManagerProps {
   allUsers: User[];
 }
 
-type AppContextType = 'WEB' | 'DESKTOP';
-type ExecutionMode = 'MANUAL' | 'AUTOMATED';
-
 const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSuites, onRunSuite, currentUser, allUsers }) => {
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isLoadingFile, setIsLoadingFile] = useState(false);
-  
-  // Generation Inputs
   const [prompt, setPrompt] = useState('');
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [importMode, setImportMode] = useState(false);
-  // Store uploaded file data for AI processing (for PDF/PPTX)
-  const [importFileData, setImportFileData] = useState<{mimeType: string, data: string} | undefined>(undefined);
-
-  const [appType, setAppType] = useState<AppContextType>('WEB');
-  const [appContextValue, setAppContextValue] = useState('');
-  const [testEmail, setTestEmail] = useState('');
-  
-  // Manual Create Case Inputs
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newCaseTitle, setNewCaseTitle] = useState('');
   const [newCaseDesc, setNewCaseDesc] = useState('');
   const [newCasePriority, setNewCasePriority] = useState<'Low'|'Medium'|'High'>('Medium');
-  const [newCaseSteps, setNewCaseSteps] = useState<{id: string, action: string, expectedResult: string}[]>([
-    { id: 'temp-1', action: '', expectedResult: '' }
-  ]);
+  const [newCaseSteps, setNewCaseSteps] = useState<{id: string, action: string, expectedResult: string}[]>([{ id: crypto.randomUUID(), action: '', expectedResult: '' }]);
 
-  // Run Configuration Inputs
-  const [showRunModal, setShowRunModal] = useState(false);
-  const [runAppType, setRunAppType] = useState<AppContextType>('WEB');
-  const [runAddress, setRunAddress] = useState('');
-  const [runValidId, setRunValidId] = useState('');
-  const [runValidPassword, setRunValidPassword] = useState('');
-  const [runMode, setRunMode] = useState<ExecutionMode>('MANUAL');
-  const [runAssets, setRunAssets] = useState<string[]>([]); // New: Virtual Assets
+  const canWrite = currentUser.email === 'administrator@autotest.ai' || activeSuite.permissions?.[currentUser.id] === 'ADMIN' || activeSuite.permissions?.[currentUser.id] === 'MEMBER';
 
-  // Excel Sheet Management
-  const [availableSheets, setAvailableSheets] = useState<{name: string}[]>([]);
-  const [currentFile, setCurrentFile] = useState<File | null>(null);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const assetInputRef = useRef<HTMLInputElement>(null); 
-  const genOpRef = useRef(0);
-  
-  // --- PERMISSION LOGIC ---
-  const isGlobalAdmin = currentUser.email === 'administrator@autotest.ai';
+  const addStep = () => setNewCaseSteps([...newCaseSteps, { id: crypto.randomUUID(), action: '', expectedResult: '' }]);
+  const removeStep = (id: string) => { if (newCaseSteps.length > 1) setNewCaseSteps(newCaseSteps.filter(s => s.id !== id)); };
+  const updateStep = (id: string, field: 'action' | 'expectedResult', value: string) => setNewCaseSteps(newCaseSteps.map(s => s.id === id ? { ...s, [field]: value } : s));
 
-  const getUserRole = (suite: TestSuite): Role | 'NONE' => {
-    if (isGlobalAdmin) return 'ADMIN';
-    if (!suite.permissions) return 'NONE'; 
-    return suite.permissions[currentUser.id] || 'NONE';
+  const handleManualCreate = () => {
+    if (!newCaseTitle.trim()) return;
+    const newCase: TestCase = { id: crypto.randomUUID(), title: newCaseTitle, description: newCaseDesc, priority: newCasePriority, steps: newCaseSteps.filter(s => s.action.trim() !== '') };
+    setSuites(prev => prev.map(s => s.id === activeSuite.id ? { ...s, cases: [...s.cases, newCase] } : s));
+    setShowCreateModal(false); resetManualForm();
   };
 
-  const activeRole = getUserRole(activeSuite);
-  
-  const canWrite = activeRole === 'ADMIN' || activeRole === 'MEMBER';
-  const canRun = activeRole === 'ADMIN' || activeRole === 'MEMBER';
-
-  // --- GENERATION & IMPORT LOGIC ---
-  const handleGenerateCases = async () => {
-    if (!canWrite) return;
-    if (!prompt.trim() || !activeSuite.id) return;
-    
-    const opId = Date.now();
-    genOpRef.current = opId;
-    setIsGenerating(true);
-
-    try {
-      let finalPrompt = prompt;
-      let contextInfo = "";
-
-      if (importMode) {
-        if (importFileData) {
-           finalPrompt = `I have attached a document file (${prompt}). Please parse this document and generate test cases from it in KOREAN.`;
-        } else {
-           finalPrompt = `I have test suite data (from an Excel file or text) with the following content. Please parse this and convert it into structured test cases in KOREAN: \n\n${prompt}`;
-        }
-        contextInfo = "Imported Data Conversion";
-      } else {
-        const locationLabel = appType === 'WEB' ? 'URL' : 'File Path/Address';
-        contextInfo = `${appType === 'WEB' ? 'Web' : 'Desktop'} Application`;
-        if (appContextValue) contextInfo += ` (${locationLabel}: ${appContextValue})`;
-        if (testEmail) contextInfo += ` [Test Account: ${testEmail}]`;
-      }
-
-      const newCases = await generateTestCases(finalPrompt, contextInfo, importFileData);
-      
-      if (genOpRef.current !== opId) return;
-      
-      setSuites(prevSuites => prevSuites.map(suite => {
-        if (suite.id === activeSuite.id) {
-          const updatedSuite = {
-            ...suite,
-            cases: [...suite.cases, ...newCases as TestCase[]]
-          };
-          
-          // Always persist the context used for generation to the suite config
-          if (!importMode) {
-             updatedSuite.targetConfig = {
-               appType,
-               appAddress: appContextValue,
-               testEmail,
-               executionMode: suite.targetConfig?.executionMode || 'MANUAL',
-               mockAssets: suite.targetConfig?.mockAssets || []
-             };
-          }
-          return updatedSuite;
-        }
-        return suite;
-      }));
-      setShowPromptModal(false);
-      resetModalState();
-    } catch (e) {
-      if (genOpRef.current === opId) {
-        alert('Failed to generate cases. Please try again.');
-      }
-    } finally {
-      if (genOpRef.current === opId) {
-        setIsGenerating(false);
-      }
-    }
-  };
-
-  const handleCancelGeneration = () => {
-    genOpRef.current = 0; 
-    setIsGenerating(false);
-    setShowPromptModal(false);
-  };
-
-  // --- TEST CASE MANAGEMENT ---
-  const handleDeleteTestCase = (caseId: string) => {
-    if (!canWrite) return;
-    if (confirm('Are you sure you want to delete this test case?')) {
-      setSuites(prevSuites => prevSuites.map(s => {
-        if (s.id === activeSuite.id) {
-          return {
-            ...s,
-            cases: s.cases.filter(c => c.id !== caseId)
-          };
-        }
-        return s;
-      }));
-    }
-  };
-
-  const handleExportTestCases = () => {
-    if (activeSuite.cases.length === 0) {
-      alert("No test cases to export.");
-      return;
-    }
-
-    // Prepare CSV data
-    const headers = ['Case ID', 'Title', 'Description', 'Priority', 'Step #', 'Action', 'Expected Result'];
-    let rows: string[] = [];
-
-    activeSuite.cases.forEach(c => {
-      c.steps.forEach((step, index) => {
-        const row = [
-          `"${c.id}"`,
-          `"${c.title.replace(/"/g, '""')}"`,
-          `"${(c.description || '').replace(/"/g, '""')}"`,
-          c.priority,
-          index + 1,
-          `"${step.action.replace(/"/g, '""')}"`,
-          `"${step.expectedResult.replace(/"/g, '""')}"`
-        ];
-        rows.push(row.join(','));
-      });
-    });
-
-    const csvContent = [headers.join(','), ...rows].join('\n');
-    // Add BOM for UTF-8 support (Korean characters)
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${activeSuite.name.replace(/\s+/g, '_')}_TestCases.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // --- MANUAL CASE CREATION ---
-  const handleAddStep = () => {
-    setNewCaseSteps([...newCaseSteps, { id: crypto.randomUUID(), action: '', expectedResult: '' }]);
-  };
-
-  const handleRemoveStep = (id: string) => {
-    if (newCaseSteps.length > 1) {
-      setNewCaseSteps(newCaseSteps.filter(s => s.id !== id));
-    }
-  };
-
-  const handleStepChange = (id: string, field: 'action' | 'expectedResult', value: string) => {
-    setNewCaseSteps(newCaseSteps.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
-
-  const handleCreateManualCase = () => {
-    if (!newCaseTitle.trim()) {
-      alert("Please enter a title.");
-      return;
-    }
-
-    const newCase: TestCase = {
-      id: crypto.randomUUID(),
-      title: newCaseTitle,
-      description: newCaseDesc,
-      priority: newCasePriority,
-      steps: newCaseSteps.map(s => ({
-        id: crypto.randomUUID(),
-        action: s.action || 'Action',
-        expectedResult: s.expectedResult || 'Expected Result'
-      }))
-    };
-
-    setSuites(prevSuites => prevSuites.map(s => {
-      if (s.id === activeSuite.id) {
-        return {
-          ...s,
-          cases: [...s.cases, newCase]
-        };
-      }
-      return s;
-    }));
-
-    // Reset and close
-    setNewCaseTitle('');
-    setNewCaseDesc('');
-    setNewCasePriority('Medium');
+  const resetManualForm = () => {
+    setNewCaseTitle(''); setNewCaseDesc(''); setNewCasePriority('Medium');
     setNewCaseSteps([{ id: crypto.randomUUID(), action: '', expectedResult: '' }]);
-    setShowCreateModal(false);
   };
 
-  // --- RUN CONFIGURATION LOGIC ---
-  const initiateRun = () => {
-    if (!canRun || !activeSuite) return;
-    const config = activeSuite.targetConfig;
-    setRunAppType(config?.appType || 'WEB');
-    setRunAddress(config?.appAddress || '');
-    setRunValidId(config?.validId || '');
-    setRunValidPassword(config?.validPassword || '');
-    setRunMode(config?.executionMode || 'MANUAL');
-    setRunAssets(config?.mockAssets || []);
-    setShowRunModal(true);
-  };
-
-  const handleAssetSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      // Fix: Explicitly type 'f' as File to avoid 'unknown' type error
-      const names = Array.from(e.target.files).map((f: File) => f.name);
-      // Avoid duplicates
-      const uniqueNames = names.filter(n => !runAssets.includes(n));
-      setRunAssets(prev => [...prev, ...uniqueNames]);
-    }
-  };
-
-  const removeAsset = (name: string) => {
-    setRunAssets(runAssets.filter(n => n !== name));
-  };
-
-  const confirmRun = () => {
-    if (!activeSuite) return;
-    const updatedSuite = {
-      ...activeSuite,
-      targetConfig: {
-        appType: runAppType,
-        appAddress: runAddress,
-        validId: runValidId,
-        validPassword: runValidPassword,
-        executionMode: runMode,
-        mockAssets: runAssets
-      }
-    };
-    setSuites(suites.map(s => s.id === activeSuite.id ? updatedSuite : s));
-    onRunSuite(updatedSuite);
-    setShowRunModal(false);
-  };
-
-  // --- HELPERS ---
-  const resetModalState = () => {
-    setPrompt('');
-    setImportMode(false);
-    setAvailableSheets([]);
-    setCurrentFile(null);
-    setImportFileData(undefined);
-    setAppContextValue('');
-    setTestEmail('');
-    setAppType('WEB');
-  };
-
-  const readExcelSheet = async (file: File, sheetName: string) => {
-    setIsLoadingFile(true);
-    try {
-      // Fix: cast returned value to unknown then any[] to ensure map works
-      const rows = (await readXlsxFile(file, { sheet: sheetName })) as unknown as any[];
-      const content = rows.map((row: any[]) => 
-        row.map(cell => cell === null ? '' : String(cell)).join('\t')
-      ).join('\n');
-      setPrompt(`[IMPORTED FILE: ${file.name} | SHEET: ${sheetName}]\n${content}`);
-    } catch (error) {
-      console.error("Error reading sheet:", error);
-      alert(`Failed to read sheet "${sheetName}".`);
-    } finally {
-      setIsLoadingFile(false);
-    }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsLoadingFile(true);
-    setCurrentFile(file);
-    setAvailableSheets([]);
-    setPrompt('');
-    setImportFileData(undefined);
-
-    try {
-      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-        // Fix: Cast the result explicitly to avoid 'unknown' errors by double casting
-        const result = (await readXlsxFile(file, { getSheets: true })) as unknown as any[];
-        const sheets = result.map((sheet: any) => ({ name: sheet.name }));
-        
-        setAvailableSheets(sheets);
-        if (sheets.length > 0) {
-          await readExcelSheet(file, sheets[0].name);
-        } else {
-          // Fix: cast returned value to unknown then any[]
-          const rows = (await readXlsxFile(file)) as unknown as any[];
-          const content = rows.map((row: any[]) => 
-            row.map(cell => cell === null ? '' : String(cell)).join('\t')
-          ).join('\n');
-          setPrompt(`[IMPORTED FILE: ${file.name}]\n${content}`);
-          setIsLoadingFile(false);
-        }
-      } else if (file.name.endsWith('.pdf') || file.name.endsWith('.pptx')) {
-         const reader = new FileReader();
-         reader.onload = () => {
-            const base64 = (reader.result as string).split(',')[1];
-            setImportFileData({
-               mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.presentationml.presentation'),
-               data: base64
-            });
-            setPrompt(`[IMPORTED FILE: ${file.name}]\n(File content will be processed by AI)`);
-            setIsLoadingFile(false);
-         };
-         reader.readAsDataURL(file);
-      } else {
-        const content = await file.text();
-        setPrompt(`[IMPORTED FILE CONTENT: ${file.name}]\n${content}`);
-        setIsLoadingFile(false);
-      }
-    } catch (error) {
-      console.error("File read error:", error);
-      alert("Failed to read file. Please ensure it is a valid Excel, PDF, PPTX or Text file.");
-      setIsLoadingFile(false);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  const openGenerateModal = () => {
-    // Reset inputs
-    setPrompt('');
-    setImportMode(false);
-    setAvailableSheets([]);
-    setCurrentFile(null);
-    setImportFileData(undefined);
-    
-    // Pre-fill from existing config if available to streamline the process
-    if (activeSuite.targetConfig) {
-      setAppType(activeSuite.targetConfig.appType);
-      setAppContextValue(activeSuite.targetConfig.appAddress);
-      setTestEmail(activeSuite.targetConfig.testEmail || '');
-    } else {
-      setAppType('WEB');
-      setAppContextValue('');
-      setTestEmail('');
-    }
-
-    setShowPromptModal(true);
-  };
-
-  const openImportModal = () => {
-    resetModalState();
-    setImportMode(true);
-    setShowPromptModal(true);
+  const handleDeleteCase = (caseId: string) => {
+    setSuites(prev => prev.map(s => s.id === activeSuite.id ? { ...s, cases: s.cases.filter(c => c.id !== caseId) } : s));
   };
 
   return (
-    <div className="h-full flex flex-col gap-6 animate-fade-in">
-      {/* Main Content Area - Full Width now */}
-      <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col overflow-hidden">
-          <>
-            <div className="p-6 border-b border-slate-100 bg-slate-50">
-               <div className="flex justify-between items-start mb-4">
-                  <div className="flex-1 mr-4">
-                    <input 
-                      className="text-xl font-bold text-slate-800 bg-transparent border-none focus:ring-0 p-0 w-full disabled:opacity-70 disabled:cursor-not-allowed"
-                      value={activeSuite.name}
-                      disabled={!canWrite}
-                      onChange={(e) => {
-                        setSuites(suites.map(s => s.id === activeSuite.id ? {...s, name: e.target.value} : s));
-                      }}
-                    />
-                    <input 
-                      className="text-sm text-slate-500 bg-transparent border-none focus:ring-0 p-0 w-full mt-1 disabled:opacity-70 disabled:cursor-not-allowed"
-                      value={activeSuite.description}
-                      disabled={!canWrite}
-                      onChange={(e) => {
-                        setSuites(suites.map(s => s.id === activeSuite.id ? {...s, description: e.target.value} : s));
-                      }}
-                    />
-                  </div>
-               </div>
-               
-              <div className="flex flex-wrap items-center gap-2">
-                 {/* Observer Controls */}
-                 {!canWrite && (
-                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-100">
-                      <Eye size={14} />
-                      Read-Only (Observer Mode)
-                    </div>
-                 )}
-
-                 {/* Write Controls */}
-                 {canWrite && (
-                   <>
-                    <button 
-                      onClick={() => setShowCreateModal(true)}
-                      className="flex items-center space-x-2 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-colors text-sm font-medium shadow-sm"
-                    >
-                      <Plus size={16} />
-                      <span className="hidden lg:inline">New Case</span>
-                    </button>
-                    <button 
-                      onClick={handleExportTestCases}
-                      className="flex items-center space-x-2 px-3 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 hover:border-slate-300 transition-colors text-sm font-medium shadow-sm"
-                    >
-                      <Download size={16} />
-                      <span className="hidden lg:inline">Export</span>
-                    </button>
-                     <button 
-                      onClick={openImportModal}
-                      className="flex items-center space-x-2 px-3 py-2 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors text-sm font-medium"
-                    >
-                      <FileSpreadsheet size={16} />
-                      <span className="hidden lg:inline">Import Data</span>
-                    </button>
-                    <button 
-                      onClick={openGenerateModal}
-                      className="flex items-center space-x-2 px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"
-                    >
-                      <Wand2 size={16} />
-                      <span className="hidden lg:inline">AI Generate</span>
-                    </button>
-                   </>
-                 )}
-
-                 {/* Run Controls */}
-                 {canRun && (
-                    <button 
-                      onClick={initiateRun}
-                      className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm ml-auto"
-                    >
-                      <Play size={16} />
-                      <span>Run Suite</span>
-                    </button>
-                 )}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
-              <div className="space-y-4">
-                {activeSuite.cases.length === 0 ? (
-                  <div className="text-center py-20 text-slate-400">
-                    <FileText size={48} className="mx-auto mb-4 opacity-20" />
-                    <p>No test cases yet.</p>
-                    {canWrite && <p className="text-sm mt-2">Click "New Case", "AI Generate" or "Import Data" to create some.</p>}
-                  </div>
-                ) : (
-                  activeSuite.cases.map((testCase, index) => (
-                    <TestCaseCard 
-                      key={testCase.id} 
-                      testCase={testCase} 
-                      index={index} 
-                      readOnly={!canWrite}
-                      onDelete={() => handleDeleteTestCase(testCase.id)}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-      </div>
-
-      {/* Manual Create Case Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 m-4 flex flex-col max-h-[90vh] animate-fade-in-up">
-              <div className="flex justify-between items-start mb-4 border-b border-slate-100 pb-4">
-                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                   <PlusCircle className="text-blue-600" /> New Test Case
-                 </h3>
-                 <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600">
-                   <X size={20} />
-                 </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-                 <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2">
-                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Title</label>
-                       <input 
-                         className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                         placeholder="e.g. Verify Login Success"
-                         value={newCaseTitle}
-                         onChange={(e) => setNewCaseTitle(e.target.value)}
-                         autoFocus
-                       />
-                    </div>
-                    <div>
-                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Priority</label>
-                       <select 
-                         className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
-                         value={newCasePriority}
-                         onChange={(e) => setNewCasePriority(e.target.value as any)}
-                       >
-                         <option value="Low">Low</option>
-                         <option value="Medium">Medium</option>
-                         <option value="High">High</option>
-                       </select>
-                    </div>
-                 </div>
-
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Description</label>
-                    <textarea 
-                       className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-20"
-                       placeholder="What is the objective of this test?"
-                       value={newCaseDesc}
-                       onChange={(e) => setNewCaseDesc(e.target.value)}
-                    />
-                 </div>
-
-                 <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Test Steps</label>
-                      <button 
-                        onClick={handleAddStep}
-                        className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        <PlusCircle size={14} /> Add Step
-                      </button>
-                    </div>
-                    <div className="space-y-3">
-                       {newCaseSteps.map((step, index) => (
-                          <div key={step.id} className="flex gap-2 items-start bg-slate-50 p-3 rounded-lg border border-slate-200">
-                             <span className="text-xs font-bold text-slate-400 mt-2.5 w-6">{index + 1}.</span>
-                             <div className="flex-1 space-y-2">
-                                <input 
-                                  className="w-full border border-slate-300 rounded-md p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
-                                  placeholder="Action (e.g. Click Login)"
-                                  value={step.action}
-                                  onChange={(e) => handleStepChange(step.id, 'action', e.target.value)}
-                                />
-                                <input 
-                                  className="w-full border border-slate-300 rounded-md p-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none"
-                                  placeholder="Expected Result (e.g. Dashboard loads)"
-                                  value={step.expectedResult}
-                                  onChange={(e) => handleStepChange(step.id, 'expectedResult', e.target.value)}
-                                />
-                             </div>
-                             <button 
-                               onClick={() => handleRemoveStep(step.id)}
-                               disabled={newCaseSteps.length === 1}
-                               className="text-slate-400 hover:text-red-500 mt-2 disabled:opacity-30"
-                             >
-                               <MinusCircle size={18} />
-                             </button>
-                          </div>
-                       ))}
-                    </div>
-                 </div>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end gap-3">
-                 <button 
-                   onClick={() => setShowCreateModal(false)}
-                   className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
-                 >
-                   Cancel
-                 </button>
-                 <button 
-                   onClick={handleCreateManualCase}
-                   className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold shadow-sm"
-                 >
-                   Create Case
-                 </button>
-              </div>
+    <div className="h-full flex flex-col gap-6 animate-fade-in text-slate-900 dark:text-slate-100">
+      <div className="flex-1 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col overflow-hidden">
+        <div className="p-6 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex flex-wrap items-center justify-between gap-4">
+           <div>
+              <h2 className="text-xl font-bold dark:text-white">{activeSuite.name}</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{activeSuite.description}</p>
+           </div>
+           <div className="flex items-center gap-2">
+              {canWrite && (
+                <>
+                  <button onClick={() => setShowCreateModal(true)} className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-bold shadow-sm"><Plus size={16}/> Case</button>
+                  <button onClick={() => { setImportMode(false); setShowPromptModal(true); }} className="flex items-center gap-2 px-3 py-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg text-sm font-medium"><Wand2 size={16}/> AI Generate</button>
+                </>
+              )}
+              <button onClick={() => onRunSuite(activeSuite)} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium shadow-sm"><Play size={16}/> Run</button>
            </div>
         </div>
-      )}
 
-      {/* AI Prompt/Import Modal */}
-      {showPromptModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 m-4 flex flex-col max-h-[90vh]">
-            <div className="p-0 mb-4">
-               <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
-                 {importMode ? <FileSpreadsheet className="text-amber-500" /> : <Wand2 className="text-indigo-500" />}
-                 {importMode ? 'Import Test Data' : 'AI Generate Test Cases'}
-               </h3>
-               
-               <p className="text-slate-500 text-sm">
-                 {importMode 
-                   ? 'Upload Excel/PDF/PPTX data. The AI will convert it into a Korean test suite.' 
-                   : 'Define your application boundary and feature. The AI will generate test cases in Korean.'}
-               </p>
-            </div>
-
-            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
-              
-              {!importMode && (
-                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4">
-                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Target Application</label>
-                   
-                   <div className="flex space-x-2">
-                      <button 
-                        onClick={() => setAppType('WEB')}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm rounded-md border transition-all ${appType === 'WEB' ? 'bg-white border-indigo-500 text-indigo-700 shadow-sm ring-1 ring-indigo-500' : 'bg-slate-100 border-transparent text-slate-500 hover:bg-slate-200'}`}
-                      >
-                        <Globe size={16} /> Website
-                      </button>
-                      <button 
-                         onClick={() => setAppType('DESKTOP')}
-                         className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm rounded-md border transition-all ${appType === 'DESKTOP' ? 'bg-white border-indigo-500 text-indigo-700 shadow-sm ring-1 ring-indigo-500' : 'bg-slate-100 border-transparent text-slate-500 hover:bg-slate-200'}`}
-                      >
-                        <Monitor size={16} /> Desktop App
-                      </button>
-                   </div>
-
-                   <div className="grid grid-cols-1 gap-3">
-                     <div>
-                       <label className="text-[10px] font-semibold text-slate-400 uppercase mb-1 block">
-                         {appType === 'WEB' ? 'Website URL' : 'Program File Address'}
-                       </label>
-                       <div className="relative">
-                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            {appType === 'WEB' ? <LinkIcon size={14} className="text-slate-400"/> : <HardDrive size={14} className="text-slate-400"/>}
-                          </div>
-                          <input 
-                              type="text"
-                              className="w-full border border-slate-300 rounded-lg pl-9 p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                              placeholder={appType === 'WEB' ? "https://example.com" : "C:\\Program Files\\MyApp\\app.exe"}
-                              value={appContextValue}
-                              onChange={(e) => setAppContextValue(e.target.value)}
-                          />
-                       </div>
-                     </div>
-
-                     <div>
-                       <label className="text-[10px] font-semibold text-slate-400 uppercase mb-1 block">
-                         Test Email / Login ID (Optional)
-                       </label>
-                       <div className="relative">
-                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Mail size={16} className="text-slate-400"/>
-                          </div>
-                          <input 
-                              type="text"
-                              className="w-full border border-slate-300 rounded-lg pl-9 p-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                              placeholder="user@example.com"
-                              value={testEmail}
-                              onChange={(e) => setTestEmail(e.target.value)}
-                          />
-                       </div>
-                     </div>
-                   </div>
-                </div>
-              )}
-
-              {importMode && (
-                <div className="space-y-4">
-                  <div>
-                    <input
-                      type="file"
-                      accept=".xlsx, .xls, .csv, .txt, .pdf, .pptx"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isLoadingFile}
-                      className="w-full py-4 border-2 border-dashed border-amber-200 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors flex flex-col items-center justify-center gap-2"
-                    >
-                      {isLoadingFile ? (
-                        <div className="animate-spin w-6 h-6 border-2 border-amber-600 border-t-transparent rounded-full" />
-                      ) : (
-                        <>
-                          <Upload size={24} />
-                          <span className="font-medium">Click to Upload File (Excel, PDF, PPTX)</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  
-                  {availableSheets.length > 0 && (
-                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                      <label className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                        <Layers size={14} />
-                        Select Sheet
-                      </label>
-                      <select 
-                        className="w-full p-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-500 outline-none"
-                        onChange={(e) => {
-                          if (currentFile) readExcelSheet(currentFile, e.target.value);
-                        }}
-                      >
-                        {availableSheets.map((sheet) => (
-                          <option key={sheet.name} value={sheet.name}>{sheet.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-col">
-                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    {importMode ? "Data Preview / Manual Input" : "Feature Description"}
-                 </label>
-                 <textarea
-                  className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none min-h-[120px] font-mono text-xs bg-slate-50"
-                  placeholder={importMode ? "Parsed content will appear here..." : "E.g., Login functionality with 2FA..."}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  disabled={isGenerating || isLoadingFile}
-                />
-              </div>
-            </div>
-            
-            <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-slate-100">
-              <button 
-                onClick={handleCancelGeneration}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
-                disabled={isLoadingFile}
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleGenerateCases}
-                disabled={isGenerating || !prompt.trim() || isLoadingFile}
-                className={`px-4 py-2 rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 text-sm font-medium shadow-sm text-white ${importMode ? 'bg-amber-600' : 'bg-indigo-600'}`}
-              >
-                {isGenerating ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>{importMode ? 'Converting...' : 'Generating (Korean)...'}</span>
-                  </>
-                ) : (
-                  <>
-                    {importMode ? <FileSpreadsheet size={16} /> : <Wand2 size={16} />}
-                    <span>{importMode ? 'Convert & Import' : 'Generate'}</span>
-                  </>
-                )}
-              </button>
-            </div>
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 dark:bg-slate-950/50">
+          <div className="space-y-4">
+            {activeSuite.cases.length === 0 ? (
+              <div className="text-center py-20 text-slate-400"><FileText size={48} className="mx-auto mb-4 opacity-20" /><p>No test cases yet.</p></div>
+            ) : (
+              activeSuite.cases.map((c, i) => <TestCaseCard key={c.id} testCase={c} index={i} readOnly={!canWrite} onDelete={() => handleDeleteCase(c.id)} />)
+            )}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Run Configuration Modal */}
-      {showRunModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 m-4 flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                  <Settings className="text-green-600" size={24} />
-                  Test Environment Setup
-                </h3>
-                <p className="text-slate-500 text-sm mt-1">Configure the environment before running.</p>
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+           <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh] overflow-hidden">
+              <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                 <h3 className="text-xl font-bold dark:text-white">직접 테스트 케이스 생성</h3>
+                 <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600"><X size={24}/></button>
               </div>
-              <button onClick={() => setShowRunModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="space-y-5 flex-1 overflow-y-auto pr-2">
-              
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Execution Mode</label>
-                <div 
-                  onClick={() => setRunMode(runMode === 'MANUAL' ? 'AUTOMATED' : 'MANUAL')}
-                  className={`flex items-center justify-between p-3 rounded-xl border-2 cursor-pointer transition-all ${
-                    runMode === 'AUTOMATED' 
-                      ? 'border-indigo-600 bg-indigo-50' 
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      runMode === 'AUTOMATED' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {runMode === 'AUTOMATED' ? <Bot size={20} /> : <Hand size={20} />}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-4">
+                       <label className="block text-xs font-bold text-slate-400 uppercase">Title</label>
+                       <input className="w-full border dark:border-slate-700 dark:bg-slate-800 rounded-xl p-3 text-sm" placeholder="Title..." value={newCaseTitle} onChange={e => setNewCaseTitle(e.target.value)} />
+                       <label className="block text-xs font-bold text-slate-400 uppercase">Description</label>
+                       <textarea className="w-full border dark:border-slate-700 dark:bg-slate-800 rounded-xl p-3 text-sm min-h-[80px]" value={newCaseDesc} onChange={e => setNewCaseDesc(e.target.value)} />
                     </div>
                     <div>
-                      <p className={`text-sm font-bold ${runMode === 'AUTOMATED' ? 'text-indigo-900' : 'text-slate-700'}`}>
-                        {runMode === 'AUTOMATED' ? 'AI Automated' : 'Manual Execution'}
-                      </p>
-                      <p className={`text-xs ${runMode === 'AUTOMATED' ? 'text-indigo-600' : 'text-slate-500'}`}>
-                        {runMode === 'AUTOMATED' ? 'AI Agent simulates steps' : 'Human verifies results'}
-                      </p>
+                       <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Priority</label>
+                       {(['Low', 'Medium', 'High'] as const).map(p => (
+                         <button key={p} onClick={() => setNewCasePriority(p)} className={`w-full text-left p-3 mb-2 rounded-xl border-2 transition-all ${newCasePriority === p ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400' : 'border-slate-100 dark:border-slate-800'}`}>{p}</button>
+                       ))}
                     </div>
-                  </div>
-                  
-                  <div className={`w-12 h-6 rounded-full relative transition-colors ${
-                    runMode === 'AUTOMATED' ? 'bg-indigo-600' : 'bg-slate-300'
-                  }`}>
-                     <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${
-                       runMode === 'AUTOMATED' ? 'translate-x-6' : 'translate-x-0'
-                     }`} />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">Application Type</label>
-                <div className="flex space-x-2">
-                  <button 
-                    onClick={() => setRunAppType('WEB')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm rounded-lg border transition-all ${runAppType === 'WEB' ? 'bg-green-50 border-green-500 text-green-700 font-medium' : 'bg-slate-50 border-transparent text-slate-500 hover:bg-slate-100'}`}
-                  >
-                    <Globe size={18} /> Website
-                  </button>
-                  <button 
-                      onClick={() => setRunAppType('DESKTOP')}
-                      className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm rounded-lg border transition-all ${runAppType === 'DESKTOP' ? 'bg-green-50 border-green-500 text-green-700 font-medium' : 'bg-slate-50 border-transparent text-slate-500 hover:bg-slate-100'}`}
-                  >
-                    <Monitor size={18} /> Desktop App
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                  {runAppType === 'WEB' ? 'Website URL' : 'File Address / Path'}
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    {runAppType === 'WEB' ? <LinkIcon size={16} className="text-slate-400"/> : <HardDrive size={16} className="text-slate-400"/>}
-                  </div>
-                  <input 
-                      type="text"
-                      className="w-full border border-slate-300 rounded-lg pl-10 p-2.5 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
-                      placeholder={runAppType === 'WEB' ? "https://example.com" : "C:\\Program Files\\MyApp.exe"}
-                      value={runAddress}
-                      onChange={(e) => setRunAddress(e.target.value)}
-                      autoFocus
-                  />
-                </div>
-              </div>
-
-              {/* Explicit Login Credentials Section */}
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
-                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block flex items-center gap-2">
-                   <Key size={14} /> Login Credentials (Optional)
-                 </label>
-                 <p className="text-[10px] text-slate-400">If provided, the auto-runner will use these. If required but missing, the test may be skipped.</p>
-                 
-                 <div className="grid grid-cols-1 gap-3">
-                   <div>
-                      <input 
-                          type="text"
-                          className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-500 outline-none"
-                          placeholder="Valid ID / Email"
-                          value={runValidId}
-                          onChange={(e) => setRunValidId(e.target.value)}
-                      />
-                   </div>
-                   <div>
-                      <input 
-                          type="password"
-                          className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-500 outline-none"
-                          placeholder="Valid Password"
-                          value={runValidPassword}
-                          onChange={(e) => setRunValidPassword(e.target.value)}
-                      />
-                   </div>
+                 </div>
+                 <div className="space-y-3">
+                    <h4 className="text-sm font-bold flex justify-between">Steps <button onClick={addStep} className="text-blue-500">+ Add</button></h4>
+                    {newCaseSteps.map((s, idx) => (
+                      <div key={s.id} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border dark:border-slate-700">
+                        <span className="text-xs font-bold text-slate-400 mt-2">{idx+1}</span>
+                        <input className="flex-1 bg-transparent border-none text-sm focus:ring-0" placeholder="Action" value={s.action} onChange={e => updateStep(s.id, 'action', e.target.value)} />
+                        <input className="flex-1 bg-transparent border-none text-sm focus:ring-0" placeholder="Expected" value={s.expectedResult} onChange={e => updateStep(s.id, 'expectedResult', e.target.value)} />
+                        <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>
+                      </div>
+                    ))}
                  </div>
               </div>
-
-              {/* Mock Assets Section */}
-              <div className="pt-2 border-t border-slate-100">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                  Test Assets (Files/Documents)
-                </label>
-                <div className="space-y-2">
-                   <div 
-                     onClick={() => assetInputRef.current?.click()}
-                     className="border-2 border-dashed border-slate-300 rounded-lg p-3 text-center cursor-pointer hover:bg-slate-50 hover:border-slate-400 transition-colors"
-                   >
-                      <input 
-                        type="file" 
-                        multiple 
-                        className="hidden" 
-                        ref={assetInputRef}
-                        onChange={handleAssetSelect}
-                      />
-                      <div className="flex flex-col items-center gap-1 text-slate-500">
-                         <FolderOpen size={20} />
-                         <span className="text-xs">Click to select files from system</span>
-                      </div>
-                   </div>
-
-                   {runAssets.length > 0 && (
-                     <div className="flex flex-wrap gap-2 mt-2">
-                       {runAssets.map(asset => (
-                         <span key={asset} className="inline-flex items-center gap-1.5 px-2 py-1 bg-slate-100 text-slate-700 text-xs rounded border border-slate-200">
-                           <FileIcon size={10} />
-                           {asset}
-                           <button onClick={() => removeAsset(asset)} className="text-slate-400 hover:text-red-500">
-                             <XCircle size={12} />
-                           </button>
-                         </span>
-                       ))}
-                     </div>
-                   )}
-                   {runAssets.length === 0 && (
-                     <p className="text-[10px] text-slate-400 italic">No files selected. Auto-runner will not see any local files.</p>
-                   )}
-                </div>
+              <div className="p-6 border-t dark:border-slate-800 flex justify-end gap-3">
+                 <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-slate-500">Cancel</button>
+                 <button onClick={handleManualCreate} className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold">Save Case</button>
               </div>
-
-            </div>
-
-            <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end space-x-3">
-              <button 
-                onClick={() => setShowRunModal(false)}
-                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmRun}
-                className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2"
-              >
-                <Play size={16} /> 
-                {runMode === 'AUTOMATED' ? 'Start Auto Run' : 'Start Testing'}
-              </button>
-            </div>
-          </div>
+           </div>
         </div>
       )}
     </div>
@@ -977,68 +123,28 @@ const SuiteManager: React.FC<SuiteManagerProps> = ({ activeSuite, suites, setSui
 
 const TestCaseCard: React.FC<{ testCase: TestCase; index: number; readOnly?: boolean; onDelete?: () => void }> = ({ testCase, index, readOnly, onDelete }) => {
   const [expanded, setExpanded] = useState(false);
-
   return (
-    <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow group">
-      <div 
-        className="p-4 cursor-pointer flex items-center justify-between hover:bg-slate-50"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-3">
-          <span className="bg-slate-100 text-slate-600 text-xs font-mono px-2 py-1 rounded">
-            TC-{index + 1}
-          </span>
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-all">
+      <div className="p-4 cursor-pointer flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-4">
+          <span className="text-lg font-bold text-slate-400">#{index+1}</span>
           <div>
-            <h4 className="font-medium text-slate-800">{testCase.title}</h4>
-            <div className="flex items-center gap-2 mt-1">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                testCase.priority === 'High' ? 'bg-red-100 text-red-700' :
-                testCase.priority === 'Medium' ? 'bg-amber-100 text-amber-700' :
-                testCase.priority === 'Low' ? 'bg-blue-100 text-blue-700' :
-                'bg-slate-100 text-slate-600'
-              }`}>
-                {testCase.priority}
-              </span>
-              <span className="text-xs text-slate-400">{testCase.steps.length} Steps</span>
-            </div>
+             <h4 className="font-bold text-slate-800 dark:text-slate-200">{testCase.title}</h4>
+             <p className="text-xs text-slate-500 line-clamp-1">{testCase.description}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-            {!readOnly && onDelete && (
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete();
-                }}
-                className="p-2 text-slate-300 hover:text-red-500 rounded-full hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                title="Delete Test Case"
-              >
-                <Trash2 size={18} />
-              </button>
-            )}
-            <div className="text-slate-400">
-              {expanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-            </div>
+        <div className="flex items-center gap-3">
+           <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${testCase.priority === 'High' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{testCase.priority}</span>
+           {!readOnly && <button onClick={e => {e.stopPropagation(); if(confirm('Delete?')) onDelete?.();}} className="text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>}
+           {expanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
         </div>
       </div>
-      
       {expanded && (
-        <div className="border-t border-slate-100 bg-slate-50 p-4">
-          <p className="text-sm text-slate-600 mb-4 italic">{testCase.description}</p>
-          <div className="space-y-3">
-            {testCase.steps.map((step, idx) => (
-              <div key={step.id} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm bg-white p-3 rounded border border-slate-200">
-                <div>
-                  <span className="font-semibold text-slate-700 block mb-1">Step {idx + 1}</span>
-                  <p className="text-slate-600">{step.action}</p>
-                </div>
-                <div>
-                  <span className="font-semibold text-slate-700 block mb-1">Expected Result</span>
-                  <p className="text-slate-600">{step.expectedResult}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="p-4 bg-slate-50 dark:bg-slate-950/50 border-t dark:border-slate-800">
+           <table className="w-full text-xs text-left">
+              <thead><tr className="text-slate-400 uppercase font-bold border-b dark:border-slate-800"><th className="p-2 w-8">#</th><th className="p-2">Action</th><th className="p-2">Expected</th></tr></thead>
+              <tbody>{testCase.steps.map((s, i) => <tr key={s.id} className="border-b last:border-0 dark:border-slate-800 hover:bg-white/5"><td className="p-2 font-bold text-slate-400">{i+1}</td><td className="p-2 dark:text-slate-300">{s.action}</td><td className="p-2 text-slate-500">{s.expectedResult}</td></tr>)}</tbody>
+           </table>
         </div>
       )}
     </div>
