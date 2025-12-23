@@ -11,6 +11,9 @@ export interface TestCase {
   id: string;
   title: string;
   description?: string;
+  preconditions?: string; // 추가: 테스트 시작 전 상태
+  testData?: string;      // 추가: 필요한 테스트 데이터 (ID/PW 등 구체적 정보)
+  category?: string;      // 추가: Functional, UI, Edge Case, Security 등
   steps: TestStep[];
   priority: 'Low' | 'Medium' | 'High';
 }
@@ -30,16 +33,16 @@ export interface TestSuite {
   description: string;
   createdAt: string;
   cases: TestCase[];
-  sprints?: Sprint[]; // List of sprints for this project
-  activeSprintId?: string; // Currently focused sprint on dashboard
-  permissions?: Record<string, Role>; // Map userId to Role
-  issuePrefix?: string; // Custom prefix for issues (e.g. "AUTH")
-  nextIssueNumber?: number; // Counter for the next issue (e.g. 1)
+  sprints?: Sprint[]; 
+  activeSprintId?: string; 
+  permissions?: Record<string, Role>; 
+  issuePrefix?: string; 
+  nextIssueNumber?: number; 
   targetConfig?: {
     appType: 'WEB' | 'FILE' | 'DESKTOP';
     appAddress: string;
     fileName?: string;
-    fileData?: string; // Base64
+    fileData?: string; 
     validId?: string; 
     validPassword?: string; 
     executionMode?: 'MANUAL' | 'AUTOMATED';
@@ -60,7 +63,7 @@ export interface TestRun {
   startTime: string;
   endTime?: string;
   status: 'IN_PROGRESS' | 'COMPLETED';
-  results: Record<string, TestResult>; // Map caseId to result
+  results: Record<string, TestResult>; 
 }
 
 export type IssueStatus = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'ARCHIVED';
@@ -72,32 +75,32 @@ export interface Comment {
   userName: string;
   userAvatar: string;
   content: string;
-  image?: string; // Base64 data string
+  image?: string; 
   timestamp: string;
 }
 
 export interface Attachment {
   id: string;
   name: string;
-  type: string; // MIME type
-  size: number; // Bytes
-  data: string; // Base64 string or URL
+  type: string; 
+  size: number; 
+  data: string; 
 }
 
 export interface Issue {
   id: string;
-  suiteId: string; // Link issue to a specific project
-  sprintId?: string; // Link issue to a specific sprint
-  key: string; // e.g. ISS-1
+  suiteId: string; 
+  sprintId?: string; 
+  key: string; 
   title: string;
   description: string;
   status: IssueStatus;
   priority: IssuePriority;
-  assignee?: string; // Stores user.name
-  resolver?: string; // Stores user.name of the resolver
-  reopenCount?: number; // Track how many times issue was reopened
+  assignee?: string; 
+  resolver?: string; 
+  reopenCount?: number; 
   createdAt: string;
-  dueDate?: string; // ISO Date string (YYYY-MM-DD)
+  dueDate?: string; 
   comments?: Comment[];
   attachments?: Attachment[]; 
 }
